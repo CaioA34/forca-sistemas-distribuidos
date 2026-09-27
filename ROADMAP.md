@@ -1,79 +1,94 @@
 # Roadmap — Jogo da Forca Distribuído
 
-Arquitetura de referência: [ARQUITETURA.md](ARQUITETURA.md).
+Referências: [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), [especificação](docs/especificacao-jogo-forca.md) e [protocolo](docs/protocolo-etapa-1.md).
 
-Implementar em etapas pequenas; avançar quando o critério de conclusão estiver atendido.
+A arquitetura adotada é **primário + reserva com estado em RAM e replicação síncrona**, usando só a biblioteca padrão do Python. Versões anteriores do plano previam Supabase, Tailscale e um processo por sala; essas ideias foram abandonadas para manter a solução autocontida nas duas VMs.
+
+Legenda: `[x]` feito, `[ ]` pendente.
 
 ## 1. Regras e jogo local
 
-- [ ] Validar com o professor a interpretação de novo nó como processo por sala.
-- [ ] Definir alternância dos turnos, letras repetidas, vitória, derrota e comportamento durante desconexões.
-- [ ] Implementar as regras da forca em Python, separadas da interface e da rede.
-- [ ] Exibir palavra parcial, turno e os dois bonequinhos no terminal.
+- [x] Regras da forca separadas da rede e da interface (`forca/game.py`).
+- [x] Turno alternado a cada tentativa válida; letra repetida, inválida ou fora da vez é rejeitada sem mudar turno ou erros.
+- [x] Seis erros por jogador; vitória ao completar a palavra, derrota ao atingir seis erros.
+- [x] Chute da palavra inteira (`/chute`): acerto vence com `PALAVRA_COMPLETA`; erro custa um membro e passa a vez.
+- [x] Terminal com palavra parcial, letras tentadas, chutes errados, turno e os dois bonecos lado a lado (`forca/ui.py`).
+- [x] `/estado` mostra só o estado; `/ajuda` (ou `/help`) mostra só os comandos.
 
-**Concluído quando:** uma partida local completa funciona e tentativas fora da vez são rejeitadas.
+**Concluído quando:** uma partida completa funciona e tentativas fora da vez são rejeitadas. ✔
 
 ## 2. Comunicação por sockets
 
-- [ ] Criar cliente e servidor TCP e mensagens JSON delimitadas por linha.
-- [ ] Tratar mensagens parciais, várias mensagens juntas, timeout e conexão encerrada.
-- [ ] Conectar dois clientes e enviar o estado atualizado aos dois.
+- [x] Mensagens JSON delimitadas por linha, com limite de tamanho (`forca/wire.py`).
+- [x] Uma conexão TCP curta por comando; o cliente consulta o estado a cada 0,5 s.
+- [x] Mensagem inválida gera erro controlado sem derrubar o servidor.
 
-**Concluído quando:** dois terminais jogam a mesma partida e mostram o mesmo estado.
+**Concluído quando:** dois terminais jogam a mesma partida e mostram o mesmo estado. ✔
 
-## 3. Espera e processos das salas
+## 3. Salas e concorrência
 
-- [ ] Criar o gerenciador de jogadores e a fila de espera.
-- [ ] Criar um processo por sala e filas locais para trocar mensagens com o gerenciador.
-- [ ] Associar cada jogador à sua sala e limitar a dois participantes.
+- [x] Distribuição automática: A espera, B inicia a sala 1; C cria a sala 2 e espera; D joga com C.
+- [x] No máximo dois jogadores por sala; salas independentes.
+- [x] Trava única (`threading.Lock`) protegendo validação, aplicação e replicação; limite de 64 conexões simultâneas (`BoundedSemaphore`).
+- [x] Versão da sala (`room_version`) para rejeitar jogadas baseadas em estado antigo.
 
-**Concluído quando:** A espera, B inicia a sala 1 com A, C cria a sala 2 e espera, e D joga com C. As partidas são independentes.
+**Concluído quando:** várias partidas funcionam ao mesmo tempo sem interferência. ✔
 
-## 4. Execução com Docker
+## 4. Sessões e reenvio
 
-- [ ] Criar `Dockerfile`, `compose.yaml`, `.dockerignore` e `.env.example`, fixando as versões das dependências.
-- [ ] Executar o gerenciador e os processos das salas em um único container por servidor.
-- [ ] Publicar a porta TCP do jogo e parametrizar identificador, endereço anunciado e acesso ao Supabase; manter credenciais fora da imagem e do Git.
-- [ ] Configurar encerramento dos processos das salas e reinício do container pela política do Docker.
+- [x] Token gerado e salvo pelo cliente antes da primeira requisição; `player_id` = SHA-256 do token.
+- [x] Nomes únicos entre jogadores ativos de todas as salas (`NOME_EM_USO`); `/sair` libera o nome.
+- [x] Trava do arquivo de sessão: dois clientes com o mesmo nome no mesmo computador não compartilham o token.
+- [x] `request_id` por comando, com recibo e impressão digital para reconhecer reenvios.
+- [x] Comando pendente salvo em disco no cliente e reenviado após queda.
+- [x] `deployment_id` impede retomar a sessão em outra execução dos servidores.
+- [x] Partida pausada enquanto um jogador está desconectado; `/sair` dá a vitória ao adversário.
 
-**Concluído quando:** clientes externos ao container jogam duas partidas independentes, e encerrar o container também encerra seus processos de sala.
+**Concluído quando:** reenviar uma jogada não duplica seu efeito e o jogador volta à mesma sala. ✔
 
-## 5. Persistência no Supabase
+## 5. Replicação e recuperação
 
-- [ ] Criar tabelas de sessões, salas/partidas, jogadas, servidores e liderança.
-- [ ] Salvar entradas e jogadas antes de confirmar aos clientes; usar transações e versões para evitar conflitos.
-- [ ] Adicionar token de sessão e identificador de jogada para reconexão e reenvio.
-- [ ] Restringir a descoberta à leitura necessária e manter dados do jogo acessíveis apenas aos servidores.
+- [x] Primário replica o estado completo e espera ACK antes de responder.
+- [x] Heartbeat a cada 0,5 s no canal de replicação (porta 5001), autenticado por chave compartilhada.
+- [x] Primário pausa ao perder o reserva; não confirma nada sem a segunda cópia.
+- [x] Reserva se promove ao perder o primário e passa a atender na porta de jogadores.
+- [x] Clientes alternam entre os endereços configurados e retomam a sessão.
+- [x] Tratar a exceção do fechamento do canal de replicação em `Server.synchronize` (a thread terminava com traceback quando o reserva caía).
+- [ ] (Opcional) Reintegrar automaticamente um servidor que volta, como novo reserva.
 
-**Concluído quando:** reiniciar o servidor permite reconstruir as salas e retomar sessões; reenviar uma jogada não duplica seu efeito.
+**Concluído quando:** encerrar o primário durante duas partidas permite que ambas continuem no reserva, preservando turno, erros, letras e jogadores aguardando. ✔ em teste automatizado com processos locais (`tests/test_servidor.py`).
 
-## 6. VMs e descoberta de servidores
+## 6. Docker e VMs
 
-- [ ] Preparar uma VM em cada notebook e conectar VMs e clientes pelo Tailscale.
-- [ ] Instalar Docker Engine e Compose em cada VM e executar a mesma imagem do servidor, com configurações próprias.
-- [ ] Registrar automaticamente o endereço Tailscale da VM e a porta publicada do container no Supabase.
-- [ ] Fazer o cliente descobrir o ativo sem uma lista fixa de IPs.
+- [x] `Dockerfile` (Python 3.12.13 slim), `compose.yaml`, `.dockerignore` e `.env.example`.
+- [x] Configuração por variáveis `MODO`, `PRIMARY_HOST` e `REPLICATION_KEY`; `.env` fora do Git e da imagem.
+- [x] `restart: "no"` para que um antigo primário não volte sozinho como ativo.
+- [ ] Preparar uma VM Ubuntu com rede Bridge em cada computador e validar a conectividade nas portas 5000 e 5001.
+- [ ] (Opcional) Executar o container com usuário sem privilégios.
 
-**Concluído quando:** um cliente conecta à VM de outro notebook; mudar o servidor anunciado não exige editar o cliente. Verificar também em redes diferentes.
+**Concluído quando:** clientes em outra máquina jogam contra o container da VM primária e o reserva sincroniza pela rede.
 
-## 7. Liderança e recuperação automática
+## 7. Robustez e experiência de jogo
 
-- [ ] Implementar aquisição e renovação atômicas da autorização temporária, com horário do banco e geração crescente.
-- [ ] Validar a autorização dentro de toda transação que altera o jogo.
-- [ ] Fazer o reserva assumir, carregar os estados e recriar as salas.
-- [ ] Fazer clientes redescobrirem o ativo e retomarem sessões com espera entre tentativas.
-- [ ] Pausar alterações quando não for possível confirmar acesso ao banco ou liderança.
+- [x] Chave de replicação comparada em bytes: acento na chave (ou uma chave inválida enviada por outro) não derruba mais o canal de sincronização.
+- [x] Recibos limitados ao último comando de cada jogador: o estado replicado não cresce com a quantidade de jogadas nem com comandos rejeitados.
+- [x] Sincronização inicial segura: o reserva só assume após a segunda mensagem, e o primário não se pausa se a cópia inicial falhar.
+- [x] `words.txt` normalizado e validado ao iniciar o servidor.
+- [x] Comandos malformados recebem resposta controlada; erros inesperados vão para o log sem derrubar o atendimento.
+- [x] Jogadores esperando em salas separadas são reagrupados ao reconectar.
+- [x] Nome de quem sumiu há 180 s e não está em partida pode ser reaproveitado.
+- [x] Resultado mostrado do ponto de vista de cada jogador ("Você venceu!"/"Você perdeu."); `/nova` durante a partida explica que ela está em andamento.
+- [x] Acentos aceitos em letras e chutes (`ç` → `C`, `conexão` → `CONEXAO`).
+- [x] `/estado` e `/ajuda` respondem mesmo sem conexão; `/estado` avisa quando não há servidor.
 
-**Concluído quando:** desligar a VM principal durante duas partidas permite que ambas continuem no reserva, preservando turno, erros, letras e jogadores aguardando.
+**Concluído quando:** os cenários T20 a T25 da especificação passam. ✔
 
 ## 8. Validação e apresentação
 
-- [ ] Testar queda após gravar uma jogada, mas antes de responder: o reenvio não pode aplicá-la duas vezes.
-- [ ] Testar dois reservas disputando a liderança e rejeição de escritas do antigo principal.
-- [ ] Testar perda de acesso ao Supabase: nenhuma ação pode ser confirmada sem gravação.
-- [ ] Testar separadamente a parada do container e o desligamento da VM ativa, verificando retomada das partidas pelo reserva.
-- [ ] Registrar nos logs criação de salas, mudanças de liderança e retomadas de sessão, sem expor tokens.
-- [ ] Preparar a demonstração em dois notebooks e conferir os requisitos do professor.
-- [ ] Criar o README com instalação, configuração e execução após a aplicação funcionar.
+- [x] Testes automatizados em `tests/` (regras, chute, salas, nomes únicos, cliente, reenvio e queda de processo), executados por `python -m unittest discover -s tests` ou `scripts/forca.ps1 testes`.
+- [x] Documentação alinhada ao código: README, ARCHITECTURE, especificação e protocolo.
+- [ ] Executar o roteiro da seção 13 da especificação com desligamento físico do computador do primário.
+- [ ] Medir e registrar o tempo de recuperação e o estado das salas antes e depois da queda.
+- [ ] Conferir os requisitos do professor, incluindo a interpretação de "nó".
 
-**Concluído quando:** a demonstração pode ser repetida seguindo o README, incluindo entrada em fila, novas salas e recuperação de falha.
+**Concluído quando:** a demonstração pode ser repetida seguindo o README, incluindo espera, novas salas e recuperação de falha.

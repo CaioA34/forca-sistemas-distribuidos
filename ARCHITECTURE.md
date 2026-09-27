@@ -2,93 +2,89 @@
 
 ## Objetivo
 
-Jogo cliente-servidor em Python, com até dois jogadores por sala, fila de espera e recuperação da mesma partida quando o servidor ativo cair.
+Jogo cliente-servidor em Python, com até dois jogadores por sala, fila de espera e continuação da mesma partida quando o servidor primário cair. Usa apenas a biblioteca padrão: `socket`, `threading`, `json`, `hashlib`, `hmac` e `secrets`.
 
 ## Componentes
 
 | Componente | Responsabilidade |
 | --- | --- |
-| Cliente Python no terminal | Enviar tentativas, mostrar os dois bonequinhos e reconectar automaticamente. |
-| Gerenciador do servidor | Receber conexões TCP, identificar jogadores e encaminhar mensagens às salas. |
-| Processo por sala | Executar as regras e processar uma jogada por vez. |
-| Servidores reservas | Aguardar autorização para assumir e reconstruir as salas pelo banco. |
-| Supabase/PostgreSQL | Guardar sessões, espera e partidas; registrar servidores e controlar quem pode atender. |
-| Tailscale | Conectar clientes e VMs pela rede privada, inclusive em redes físicas diferentes. |
-| Docker Engine + Compose | Executar o servidor e suas dependências de forma padronizada dentro de cada VM. |
+| Cliente Python no terminal (`cliente.py`) | Ler comandos, consultar o estado, desenhar os dois bonecos, guardar a sessão e reconectar ao outro servidor. |
+| Servidor primário (`servidor.py`, modo `primario`) | Atender jogadores na porta 5000, aplicar as regras sob uma trava e replicar cada alteração antes de responder. |
+| Servidor reserva (`servidor.py`, modo `reserva`) | Manter uma cópia do estado recebida pela porta 5001 e assumir a porta de jogadores quando o primário cair. |
+| Regras (`forca/game.py`, `forca/lobby.py`) | Partida, salas, sessões, nomes únicos e recibos de comandos. Não abrem sockets. |
+| Protocolo (`forca/wire.py`) | JSON UTF-8, um objeto por linha, com limite de tamanho. |
+| Docker Engine + Compose | Executar o servidor de forma padronizada em cada VM. |
+| VirtualBox | Uma VM Ubuntu por computador físico, com rede em modo bridge. |
 
-Infraestrutura inicial: dois notebooks físicos, cada um com uma VM Ubuntu Server no VirtualBox e um container do servidor Python. Tailscale instalado diretamente nas VMs e nos dispositivos clientes; as VMs podem usar NAT para acessar a internet.
-
-Bibliotecas: `socket`, `json`, `threading`, `multiprocessing` e cliente Python do Supabase. Filas de `multiprocessing` conectam o gerenciador aos processos locais das salas.
+Infraestrutura da apresentação: dois computadores físicos, cada um com uma VM Ubuntu no VirtualBox e um container do servidor. Os clientes rodam com Python fora do Docker, no computador que permanecerá ligado ou em outros dispositivos da mesma rede.
 
 ## Organização
 
 ```mermaid
 flowchart LR
-    C[Clientes] -->|Consulta de descoberta HTTPS| DB[(Supabase)]
-    C -->|Socket TCP via Tailscale| A
-    subgraph VM_A[VM no notebook A]
-        subgraph CONTAINER_A[Container Docker]
-            A[Gerenciador ativo] --> S1[Processo: sala 1]
-            A --> S2[Processo: sala 2]
-        end
+    C[Clientes] -->|TCP 5000: um comando por conexão| P
+    C -.->|Após a queda: TCP 5000| R
+    subgraph VM_A[VM no computador A]
+        P[Primário<br/>estado em RAM]
     end
-    A -->|Grava estados e renova autorização| DB
-    R[Containers reservas em outras VMs] -->|Consultam e disputam autorização| DB
+    subgraph VM_B[VM no computador B]
+        R[Reserva<br/>cópia do estado em RAM]
+    end
+    R -->|TCP 5001: chave, estado + ACK, heartbeat| P
 ```
 
-Um único servidor atende por vez. Os reservas aumentam a tolerância a falhas; as salas executam no servidor ativo.
+Um único servidor aceita alterações por vez. O primário atende todas as salas; o reserva não abre a porta de jogadores até ser promovido. Não há banco de dados nem serviço externo: cada servidor guarda o estado em memória.
 
-**Interpretação de nó:** cada nova sala cria um processo Python independente. Essa interpretação deve ser validada com o professor caso “nó” exija uma VM ou máquina adicional.
+**Interpretação de nó:** os nós do sistema distribuído são os dois servidores em computadores físicos diferentes. As salas são estruturas de dados dentro do primário, não processos separados. Essa interpretação deve ser validada com o professor.
 
 ## Execução com Docker
 
-- Um container por servidor, contendo o gerenciador e os processos das salas. Novas salas são criadas com `multiprocessing` dentro desse container.
-- Ativo e reservas usam a mesma imagem; cada instância recebe seu identificador e endereço anunciado por configuração. A autorização no Supabase determina quem atende.
-- `Dockerfile` define Python, dependências e código; `compose.yaml` configura a execução separadamente em cada VM. `.dockerignore` exclui arquivos desnecessários e segredos da imagem; `.env.example` documenta configurações sem credenciais reais.
-- O servidor escuta em `0.0.0.0:5000` dentro do container. O Compose publica essa porta na VM, acessível pelo Tailscale. A descoberta anuncia o endereço Tailscale da VM e a porta publicada.
-- Credenciais são fornecidas em tempo de execução, fora da imagem e do Git. O Supabase permanece hospedado na nuvem; estados locais são reconstruídos pelo banco após reinícios.
-- O Docker pode reiniciar o container na mesma VM. A recuperação após a queda do notebook continua sendo feita pelos reservas e pela reconexão dos clientes.
+- Um container por VM, com a mesma imagem (`python:3.12.13-slim`). O papel é definido por `MODO` no `.env`.
+- `compose.yaml` publica 5000 (jogadores) e 5001 (replicação) na VM. O servidor escuta em `0.0.0.0`.
+- O reserva conecta ao IP da VM primária (`PRIMARY_HOST`) na porta publicada 5001, apresentando `REPLICATION_KEY`.
+- `.dockerignore` exclui `.env`, sessões e arquivos gerados da imagem; `.env.example` documenta as variáveis.
+- `restart: "no"`: um antigo primário não pode voltar sozinho como ativo com o estado vazio. A recuperação entre computadores é feita pelo reserva, não pela política de reinício do Docker.
 
 ## Entrada e comunicação
 
-1. O cliente consulta um endereço fixo do Supabase para descobrir o servidor ativo.
-2. Recebe o endereço Tailscale e a porta e abre uma conexão TCP.
-3. O servidor cria uma sessão ou recupera a sessão apresentada pelo cliente.
-4. Havendo sala com um jogador aguardando, o novo jogador ocupa a vaga e inicia a partida.
-5. Caso contrário, cria uma sala e seu processo; o jogador aguarda adversário.
+1. O cliente gera um token aleatório, salva em `sessions/<nome>.json` e trava esse arquivo enquanto estiver aberto.
+2. Envia `ENTRAR` com o nome ao primeiro endereço da lista (`--servers` ou `CLIENT_SERVERS`).
+3. O servidor recusa o nome se outro jogador ativo já o usa (`NOME_EM_USO`). O nome de quem está há 180 s sem consultar e fora de uma partida em andamento pode ser reaproveitado. Depois, procura uma sala com um jogador aguardando e conectado.
+4. Se encontrar, ocupa a segunda vaga e inicia a partida com uma palavra sorteada; o primeiro a entrar começa.
+5. Se não encontrar, cria uma nova sala e o jogador aguarda.
+6. Ao reconectar enquanto espera, o cliente envia `ENTRAR` de novo. Se outra sala tiver alguém esperando e conectado, o servidor junta os dois e cancela a sala antiga.
 
-A espera segue a ordem de chegada. Cada sala tem no máximo dois jogadores. Todos os clientes usam a mesma porta de entrada; o gerenciador encaminha as mensagens ao processo correto.
+Depois disso, o cliente envia `ESTADO` a cada 0,5 s e `JOGAR`, `CHUTAR` ou `SAIR` quando o jogador digita. Cada comando abre uma conexão TCP curta, envia uma linha JSON, lê a resposta e fecha. A resposta sempre traz o estado público da sala; a palavra secreta só é enviada quando a partida termina. Detalhes em [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md).
 
-Protocolo: JSON em UTF-8, uma mensagem por linha. O receptor acumula bytes e separa mensagens completas, pois um `recv()` pode retornar mensagens parciais ou agrupadas. Mensagens principais: entrar, retomar sessão, enviar tentativa e receber estado.
+## Partidas e estado
 
-## Partidas e armazenamento
+O servidor valida participante, turno, versão da sala e entrada antes de aplicar uma jogada. Jogadas fora da vez ou com versão antiga são recusadas sem alterar a partida.
 
-O servidor valida o jogador da vez e rejeita tentativas fora do turno. Após cada jogada confirmada, envia aos dois clientes a palavra parcial, letras tentadas, erros individuais, próximo turno e resultado. A palavra secreta permanece no servidor e no banco durante a partida.
-
-| Dados | Conteúdo mínimo |
+| Dados | Conteúdo |
 | --- | --- |
-| Sessões | Jogador, hash do token de reconexão e sala. O cliente guarda o token original. |
-| Salas e partidas | Participantes, ordem de espera, situação, palavra, tentativas, erros, turno e versão. |
-| Jogadas | Identificador único por sessão e resultado, para reconhecer reenvios. |
-| Servidores | Identificador, endereço anunciado e porta. |
-| Liderança | Servidor autorizado, prazo de validade e geração da autorização. |
+| Jogadores | `player_id` (SHA-256 do token), nome, sala e se está ativo |
+| Salas | Participantes, palavra, letras, chutes errados, erros por jogador, turno, estado, versão, vencedor e motivo |
+| Recibos | Para cada jogador, só o último comando: `request_id`, impressão digital e resultado |
+| Controle | `deployment_id` da execução e `revision` global |
 
-O banco é a fonte oficial dos dados. Antes de confirmar uma ação ao cliente, o servidor grava seu resultado. Alterações relacionadas são feitas na mesma transação: por exemplo, registrar uma jogada e atualizar a partida.
+A lista `forca/words.txt` é normalizada ao iniciar (acentos removidos, maiúsculas); uma linha com espaços, hífens ou números impede o servidor de subir. Letras e chutes com acento também são normalizados.
 
-Funções PostgreSQL chamadas pelo Python verificam a autorização vigente, a versão esperada da partida e a duplicidade da jogada. Entradas e criação de salas também usam transações para impedir vagas duplicadas. Os processos locais são criados ou reconstruídos a partir dos registros confirmados.
+Uma única trava (`threading.Lock`) torna indivisível a sequência: copiar o estado → aplicar a regra → replicar e esperar ACK → adotar a cópia → responder. Um `BoundedSemaphore` limita a 64 as conexões simultâneas.
 
 ## Recuperação de falhas
 
-- O ativo renova uma autorização temporária (*lease*), usando o relógio do banco.
-- Após a expiração, os reservas tentam adquiri-la por uma operação atômica; apenas um vence. Cada aquisição gera um número crescente de geração.
-- Toda alteração verifica no banco o servidor, a geração e a validade da autorização. Isso impede escritas de um antigo principal após a troca.
-- O novo ativo carrega os estados e recria os processos das salas.
-- Os clientes detectam a queda por desconexão ou timeout, consultam novamente a descoberta e retomam suas sessões. Durante a transição, esperam e repetem a consulta.
-- Uma tentativa reenviada mantém seu identificador; se já foi gravada, o servidor devolve o resultado sem aplicá-la novamente.
-- Um servidor que retorna entra como reserva. Nenhuma conexão TCP antiga é transferida: os clientes abrem novas conexões.
+- **Replicação síncrona:** o primário envia o estado completo ao reserva e só responde ao jogador depois do ACK com a mesma revisão. Toda alteração confirmada existe nas duas máquinas.
+- **Sincronização inicial:** o reserva apresenta a chave (comparada em bytes, aceita acentos) e recebe o estado completo. Ele só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Por isso, se a cópia inicial falhar, o primário não precisa se pausar: espera outra tentativa.
+- **Heartbeat:** logo após o ACK inicial e depois a cada 0,5 s. O primário espera 3 s por resposta; o reserva espera 5 s.
+- **Queda do primário:** o reserva detecta o fechamento da conexão ou o timeout e se promove (`RESERVA_PROMOVIDO`), abrindo a porta 5000 com a última revisão recebida.
+- **Queda do reserva:** o primário se pausa e responde `retry` a tudo, pois não consegue obter a segunda cópia. É preciso reiniciar os dois servidores.
+- **Clientes:** em erro, timeout ou `retry`, tentam o próximo endereço da lista a cada 0,5 s, mantendo token e comando pendente. Nenhuma conexão TCP antiga é transferida.
+- **Reenvio:** o comando pendente mantém seu `request_id`. Os recibos são replicados; se a ação já foi aplicada, o reserva devolve o mesmo resultado sem repeti-la.
+- **Entradas malformadas:** comandos inválidos recebem "Comando inválido"; uma falha inesperada é registrada no log e respondida como erro interno, sem derrubar o servidor.
+- **Execuções diferentes:** o `deployment_id` salvo na sessão faz o cliente recusar um servidor de outra execução (resposta `fatal`).
 
 ## Acesso e limites
 
-O cliente pode consultar apenas os dados necessários à descoberta. Sessões, palavras secretas e controle de liderança ficam restritos aos servidores; credenciais privilegiadas ficam nas VMs, fora do Git. Permissões e políticas do Supabase devem aplicar essa separação.
+A chave de replicação é comparada com `hmac.compare_digest`; o tráfego não usa TLS e fica restrito à rede local da apresentação. Tokens ficam só nos arquivos de sessão dos clientes, fora do Git e dos logs.
 
-A recuperação cobre a queda do servidor ativo enquanto Supabase e rede permanecem acessíveis. Sem acesso ao banco, novas jogadas ficam pausadas. A troca de servidor pode causar uma breve interrupção, preservando todas as ações confirmadas.
+O modelo supõe falha por parada, uma falha por vez, com a rede entre os equipamentos vivos funcionando. Como o primário não confirma nada sem o reserva, uma interrupção só da rede entre os servidores não gera dois históricos confirmados. Depois da promoção, porém, existe uma única cópia; não há reintegração automática do servidor que volta, e se os dois servidores pararem as partidas se perdem.

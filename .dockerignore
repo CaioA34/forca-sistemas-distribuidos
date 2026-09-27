@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+data
+sessions
+tmp
+output
+.env
+
+docs/
+output/

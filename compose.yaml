@@ -1,0 +1,12 @@
+services:
+  servidor:
+    build: .
+    environment:
+      MODO: ${MODO:-primario}
+      PRIMARY_HOST: ${PRIMARY_HOST:-127.0.0.1}
+      REPLICATION_KEY: ${REPLICATION_KEY:-forca-aula}
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    # Um antigo primário não deve retornar automaticamente como ativo.
+    restart: "no"

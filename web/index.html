@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forca Distribuída</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topo">
+    <h1>Forca</h1>
+    <p id="conexao" class="conexao" role="status" aria-live="polite">
+      <span class="ponto" aria-hidden="true"></span><span id="conexao-texto">Desconectado</span>
+    </p>
+  </header>
+
+  <main>
+    <section id="entrada" class="cartao entrada" hidden>
+      <h2>Entrar no jogo</h2>
+      <p class="dica">Você entra na próxima sala com vaga. A partida começa quando outro jogador chegar.</p>
+      <form id="form-entrada" autocomplete="off">
+        <label for="nome">Seu nome</label>
+        <div class="linha">
+          <input id="nome" name="nome" maxlength="24" required autofocus>
+          <button type="submit">Entrar</button>
+        </div>
+      </form>
+      <p id="entrada-erro" class="erro" role="alert"></p>
+    </section>
+
+    <section id="jogo" hidden>
+      <div class="sala">
+        <span id="sala-id" class="sala-id"></span>
+        <span id="sala-status" class="selo"></span>
+      </div>
+
+      <p id="sem-sala" class="cartao aviso" hidden>Você não está em nenhuma sala.</p>
+
+      <div id="tabuleiro">
+        <div class="jogadores">
+          <article class="jogador cartao" id="jogador-0"></article>
+          <article class="jogador cartao" id="jogador-1"></article>
+        </div>
+
+        <p id="palavra" class="palavra" aria-label="Palavra"></p>
+        <p id="vez" class="vez" aria-live="polite"></p>
+
+        <div id="teclado" class="teclado" aria-label="Letras"></div>
+
+        <form id="form-chute" class="linha chute" autocomplete="off">
+          <label class="oculto" for="chute">Chutar a palavra inteira</label>
+          <input id="chute" maxlength="30" placeholder="Chutar a palavra inteira">
+          <button type="submit">Chutar</button>
+        </form>
+
+        <p id="chutes-errados" class="detalhe"></p>
+      </div>
+
+      <p id="mensagem" class="mensagem" role="status" aria-live="polite"></p>
+
+      <div class="acoes">
+        <button id="nova" type="button">Nova partida</button>
+        <button id="sair" type="button" class="secundario">Sair</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -62,7 +62,7 @@ class RoomTests(unittest.TestCase):
         self.assertEqual(lobby.enter("Ana")["message"], "Você está na sala-2.")  # Ana volta e se junta.
         view = lobby.view("Ana")
         self.assertEqual((view["room_id"], view["status"]), ("sala-2", "EM_JOGO"))
-        self.assertEqual(lobby.state["world"]["rooms"]["sala-1"]["status"], "CANCELADA")
+        self.assertNotIn("sala-1", lobby.state["world"]["rooms"])  # Cancelada e sem ninguém: removida.
 
     def test_jogador_ausente_pausa_a_partida(self):
         lobby = Lobby()
@@ -131,7 +131,7 @@ class UniqueNameTests(unittest.TestCase):
         lobby.idle.add(player_id(token("ana1")))
         self.assertEqual(lobby.enter("ana2", "Ana")["message"], "Você está na sala-2.")
         self.assertIsNone(lobby.view("ana1"))
-        self.assertEqual(lobby.state["world"]["rooms"]["sala-1"]["status"], "CANCELADA")
+        self.assertNotIn("sala-1", lobby.state["world"]["rooms"])  # Cancelada e sem ninguém: removida.
         self.assertEqual(lobby.enter("ana1", "Ana")["code"], "NOME_EM_USO")
 
     def test_nome_de_quem_esta_em_partida_nao_e_liberado(self):
@@ -182,6 +182,74 @@ class ResendTests(unittest.TestCase):
             lobby.send(f"intruso{i}", "JOGAR", letter="A", version=0)  # Nunca entrou: nada a guardar.
         self.assertEqual(len(lobby.state["receipts"]), 1)
         self.assertEqual(lobby.state["revision"], 401)
+
+
+class CollectionTests(unittest.TestCase):
+    """O estado replicado só guarda o que alguém ainda consulta."""
+
+    def play_until_the_end(self, lobby, a, b):
+        lobby.enter(a)
+        lobby.enter(b)
+        version = lobby.view(a)["room_version"]
+        lobby.send(a, "CHUTAR", word="SOCKET", version=version)
+
+    def test_partidas_encerradas_e_quem_saiu_sao_removidos(self):
+        lobby = Lobby()
+        for i in range(50):
+            self.play_until_the_end(lobby, f"a{i}", f"b{i}")
+            lobby.send(f"a{i}", "SAIR")
+            lobby.send(f"b{i}", "SAIR")
+        world = lobby.state["world"]
+        self.assertEqual((world["players"], world["rooms"], lobby.state["receipts"]), ({}, {}, {}))
+
+    def test_sala_encerrada_fica_enquanto_alguem_olha_para_ela(self):
+        lobby = Lobby()
+        self.play_until_the_end(lobby, "Ana", "Bruno")
+        lobby.send("Ana", "SAIR")
+        view = lobby.view("Bruno")  # O nome de Ana continua aparecendo para Bruno.
+        self.assertEqual([p["name"] for p in view["players"]], ["Ana", "Bruno"])
+        self.assertTrue(lobby.enter("Ana2", "Ana")["ok"])  # Mas o nome já está livre.
+        lobby.enter("Bruno")  # Bruno parte para outra sala: a antiga some.
+        self.assertNotIn("sala-1", lobby.state["world"]["rooms"])
+
+    def test_quem_sumiu_fora_de_partida_e_liberado_sem_disputa_de_nome(self):
+        lobby = Lobby()
+        self.play_until_the_end(lobby, "Ana", "Bruno")
+        lobby.enter("Caio")
+        for who in ("Ana", "Bruno", "Caio"):
+            lobby.online.discard(player_id(token(who)))
+            lobby.idle.add(player_id(token(who)))
+        lobby.enter("Dani")
+        world = lobby.state["world"]
+        self.assertEqual([p["name"] for p in world["players"].values()], ["Dani"])
+        self.assertEqual(list(world["rooms"]), ["sala-3"])
+
+    def test_partida_em_andamento_so_e_cancelada_quando_todos_somem(self):
+        lobby = Lobby()
+        lobby.enter("Ana")
+        lobby.enter("Bruno")
+        lobby.idle.add(player_id(token("Ana")))
+        lobby.enter("Caio")
+        self.assertEqual(lobby.state["world"]["rooms"]["sala-1"]["status"], "EM_JOGO")
+        lobby.idle.add(player_id(token("Bruno")))
+        lobby.enter("Dani")
+        self.assertNotIn("sala-1", lobby.state["world"]["rooms"])
+        self.assertTrue(lobby.enter("Ana2", "Ana")["ok"])
+
+    def test_jogar_em_partida_encerrada_nao_diz_pausada(self):
+        lobby = Lobby()
+        self.play_until_the_end(lobby, "Ana", "Bruno")
+        lobby.online.discard(player_id(token("Bruno")))
+        result = lobby.send("Ana", "JOGAR", letter="A", version=lobby.view("Ana")["room_version"])
+        self.assertEqual(result["code"], "PARTIDA_INDISPONIVEL")
+
+    def test_estado_para_1244_partidas_continua_pequeno(self):
+        lobby = Lobby()
+        for i in range(1244):
+            self.play_until_the_end(lobby, f"a{i}", f"b{i}")
+            lobby.send(f"a{i}", "SAIR")
+            lobby.send(f"b{i}", "SAIR")
+        self.assertLess(len(str(lobby.state)), 1000)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,162 @@
+:root {
+  --fundo: #f4f1ea;
+  --cartao: #ffffff;
+  --texto: #1f2328;
+  --suave: #5b636d;
+  --borda: #d9d4c7;
+  --destaque: #2f6f4f;
+  --destaque-texto: #ffffff;
+  --acerto: #2f6f4f;
+  --erro: #b3261e;
+  --aviso: #8a5a00;
+  --tecla: #ece7da;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #15181c;
+    --cartao: #1e2227;
+    --texto: #e7e9ec;
+    --suave: #9aa3ad;
+    --borda: #343a41;
+    --destaque: #5fb58a;
+    --destaque-texto: #0f1a14;
+    --acerto: #5fb58a;
+    --erro: #f2837a;
+    --aviso: #e0b35a;
+    --tecla: #2a3037;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  line-height: 1.45;
+}
+
+main { max-width: 760px; margin: 0 auto; padding: 0 16px 32px; }
+
+.topo {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1 { margin: 0; font-size: 1.6rem; letter-spacing: 0.04em; }
+h2 { margin: 0 0 8px; font-size: 1.2rem; }
+
+.conexao { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--suave); font-size: 0.9rem; }
+.ponto { width: 10px; height: 10px; border-radius: 50%; background: var(--erro); }
+.conexao.ok .ponto { background: var(--acerto); }
+
+.cartao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.entrada { margin-top: 24px; }
+.dica, .detalhe { color: var(--suave); font-size: 0.95rem; }
+label { display: block; margin-bottom: 6px; font-weight: 600; }
+
+.linha { display: flex; gap: 8px; }
+.linha input { flex: 1; min-width: 0; }
+
+input {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--destaque);
+  color: var(--destaque-texto);
+  cursor: pointer;
+}
+button.secundario { background: transparent; color: var(--texto); border: 1px solid var(--borda); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--destaque); outline-offset: 2px; }
+
+.erro { color: var(--erro); min-height: 1.4em; margin: 10px 0 0; }
+
+.sala { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 12px; }
+.sala-id { font-weight: 600; }
+.selo {
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--borda);
+  background: var(--cartao);
+}
+.selo.pausada { color: var(--aviso); border-color: var(--aviso); }
+.selo.em_jogo { color: var(--acerto); border-color: var(--acerto); }
+
+.aviso { text-align: center; }
+
+.jogadores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.jogador { text-align: center; padding: 12px; }
+.jogador.vez { border-color: var(--destaque); box-shadow: 0 0 0 2px var(--destaque); }
+.jogador.ausente { opacity: 0.55; }
+.jogador h3 { margin: 0 0 4px; font-size: 1rem; overflow-wrap: anywhere; }
+.jogador p { margin: 4px 0 0; color: var(--suave); font-size: 0.9rem; }
+.jogador svg { width: 100%; max-width: 150px; height: auto; }
+.forca-estrutura { stroke: var(--suave); }
+.forca-boneco { stroke: var(--texto); }
+
+.palavra {
+  text-align: center;
+  font-size: clamp(1.4rem, 6vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  margin: 20px 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.vez { text-align: center; font-weight: 600; min-height: 1.5em; }
+
+.teclado {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px;
+  margin: 12px 0;
+}
+.teclado button { padding: 10px 0; background: var(--tecla); color: var(--texto); }
+.teclado button.acerto { background: var(--acerto); color: var(--destaque-texto); opacity: 1; }
+.teclado button.errou { background: var(--erro); color: #ffffff; opacity: 0.8; }
+
+.chute { margin-top: 8px; }
+
+.mensagem { min-height: 1.5em; text-align: center; color: var(--suave); }
+.mensagem.falha { color: var(--erro); }
+
+.acoes { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+
+.oculto {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
+}
+
+[hidden] { display: none !important; }
+
+@media (max-width: 420px) {
+  .jogadores { gap: 8px; }
+  .jogador { padding: 8px; }
+}

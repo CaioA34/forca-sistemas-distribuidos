@@ -1,0 +1,36 @@
+# Gateway na instância Oracle. Copie .env.example para .env e rode, nesta pasta: docker compose up -d --build
+# O Nginx da própria máquina publica forca.ambrosias.dev apontando para 127.0.0.1:${GATEWAY_HOST_PORT}.
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: forca-gateway
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?defina TS_AUTHKEY no .env}
+      TS_HOSTNAME: forca-gateway
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"  # Modo kernel: o gateway abre conexões para forca-a e forca-b.
+      TS_ACCEPT_DNS: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:${GATEWAY_HOST_PORT:-8080}:8080"  # Só o Nginx local alcança; o público entra pelo domínio.
+    restart: unless-stopped
+
+  gateway:
+    build: ../..
+    command: ["python", "gateway.py"]
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_started
+        restart: true
+    environment:
+      SERVIDORES: ${SERVIDORES:-forca-a:5000,forca-b:5000}
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:

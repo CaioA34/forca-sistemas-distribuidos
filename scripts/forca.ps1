@@ -1,6 +1,6 @@
 param(
     [Parameter(Position=0)]
-    [ValidateSet('servidor', 'cliente', 'testes')]
+    [ValidateSet('servidor', 'gateway', 'local', 'cliente', 'testes')]
     [string]$Modo = 'servidor',
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]]$Opcoes
@@ -32,6 +32,8 @@ Push-Location -LiteralPath $taskRoot
 try {
     switch ($Modo) {
         'servidor' { & $pythonExecutable @pythonPrefix servidor.py @Opcoes }
+        'gateway' { & $pythonExecutable @pythonPrefix gateway.py @Opcoes }
+        'local' { & $pythonExecutable @pythonPrefix scripts/local.py @Opcoes }
         'cliente' { & $pythonExecutable @pythonPrefix cliente.py @Opcoes }
         'testes' { & $pythonExecutable @pythonPrefix -m unittest discover -s tests -v @Opcoes }
     }

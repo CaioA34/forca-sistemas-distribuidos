@@ -15,17 +15,53 @@ def player_id(token):
 
 
 def new_state():
-    return {"world": World(str(uuid.uuid4())).to_dict(), "receipts": {}, "revision": 0}
+    # epoch conta as promoções: cresce a cada vez que um reserva assume o jogo.
+    return {"world": World(str(uuid.uuid4())).to_dict(), "receipts": {}, "revision": 0, "epoch": 1}
 
 
 def public_state(state, pid, online):
-    world = World.from_dict(state["world"])
-    player = world.players.get(pid)
-    room = world.rooms.get(player.room_id) if player else None
-    result = room.public(world.players, online) if room else None
-    if result and room.status == "EM_JOGO" and not set(room.players) <= online:
+    """Monta só a sala do jogador: a consulta roda a cada segundo e não pode custar o mundo inteiro."""
+    players = state["world"]["players"]
+    player = players.get(pid)
+    data = state["world"]["rooms"].get(player["room_id"]) if player else None
+    if data is None:
+        return None
+    room = Room(**data)
+    result = room.public({p: Player(**players[p]) for p in room.players}, online)
+    if room.status == "EM_JOGO" and not set(room.players) <= online:
         result["status"] = "PAUSADA"
     return result
+
+
+def release(world, player, room):
+    """O jogador deixa de reservar o nome; uma sala em que esperava sozinho é cancelada."""
+    if room and room.status == "AGUARDANDO":
+        room.finish(None, "ABANDONO")
+        room.version += 1
+    player.room_id, player.active = None, False
+
+
+def collect(state, world, idle):
+    """Libera quem sumiu e apaga o que ninguém mais consulta, para o estado replicado não crescer sem limite.
+
+    Partidas em andamento só são canceladas quando todos os participantes sumiram.
+    """
+    for room in world.rooms.values():
+        if room.status == "EM_JOGO" and set(room.players) <= idle:
+            room.finish(None, "ABANDONO")
+            room.version += 1
+    for player in world.players.values():
+        room = world.rooms.get(player.room_id)
+        if player.active and player.id in idle and not (room and room.status == "EM_JOGO"):
+            release(world, player, room)
+    # Uma sala encerrada fica enquanto alguém ainda olha para ela; o nome do adversário que saiu também.
+    rooms = {r.id for r in world.rooms.values() if r.status not in FINISHED}
+    rooms |= {p.room_id for p in world.players.values() if p.active and p.room_id}
+    players = {p.id for p in world.players.values() if p.active}
+    players |= {pid for rid in rooms for pid in world.rooms[rid].players}
+    world.rooms = {rid: r for rid, r in world.rooms.items() if rid in rooms}
+    world.players = {pid: p for pid, p in world.players.items() if pid in players}
+    state["receipts"] = {pid: r for pid, r in state["receipts"].items() if pid in players}
 
 
 def claim_name(world, pid, name, idle):
@@ -36,10 +72,7 @@ def claim_name(world, pid, name, idle):
         room = world.rooms.get(other.room_id)
         if other.id not in idle or (room and room.status == "EM_JOGO"):
             raise GameError("NOME_EM_USO", f"O nome {name} já está em uso. Escolha outro nome.")
-        if room and room.status == "AGUARDANDO":
-            room.finish(None, "ABANDONO")
-            room.version += 1
-        other.room_id, other.active = None, False
+        release(world, other, room)
 
 
 def enter(world, player, online, words):
@@ -108,7 +141,7 @@ def apply(state, command, online, words, idle=frozenset()):
             room = world.rooms.get(player.room_id) if player else None
             if room is None:
                 raise GameError("SEM_SALA", "Entre em uma sala com /nova.")
-            if not set(room.players) <= online:
+            if room.status == "EM_JOGO" and not set(room.players) <= online:
                 raise GameError("PAUSADA", "Aguardando o outro jogador reconectar.")
             if kind == "JOGAR":
                 hit = room.guess(pid, command.get("letter"), command.get("version"))
@@ -132,6 +165,7 @@ def apply(state, command, online, words, idle=frozenset()):
             raise GameError("COMANDO_INVALIDO", "Comando desconhecido.")
     except GameError as exc:
         result = {"ok": False, "message": str(exc), "code": exc.code}
+    collect(state, world, idle)
     state["world"] = world.to_dict()
     if pid in world.players:
         # O cliente tem um único comando pendente por vez: basta o último recibo de cada jogador.

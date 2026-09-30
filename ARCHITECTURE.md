@@ -2,89 +2,99 @@
 
 ## Objetivo
 
-Jogo cliente-servidor em Python, com até dois jogadores por sala, fila de espera e continuação da mesma partida quando o servidor primário cair. Usa apenas a biblioteca padrão: `socket`, `threading`, `json`, `hashlib`, `hmac` e `secrets`.
+Jogo da forca com até dois jogadores por sala, várias partidas simultâneas e continuação da mesma partida quando o nó que atende cair. Usa apenas a biblioteca padrão do Python: `socket`, `threading`, `http.server`, `json`, `hashlib`, `hmac`.
 
 ## Componentes
 
 | Componente | Responsabilidade |
 | --- | --- |
-| Cliente Python no terminal (`cliente.py`) | Ler comandos, consultar o estado, desenhar os dois bonecos, guardar a sessão e reconectar ao outro servidor. |
-| Servidor primário (`servidor.py`, modo `primario`) | Atender jogadores na porta 5000, aplicar as regras sob uma trava e replicar cada alteração antes de responder. |
-| Servidor reserva (`servidor.py`, modo `reserva`) | Manter uma cópia do estado recebida pela porta 5001 e assumir a porta de jogadores quando o primário cair. |
-| Regras (`forca/game.py`, `forca/lobby.py`) | Partida, salas, sessões, nomes únicos e recibos de comandos. Não abrem sockets. |
+| Página (`web/`) | Tela do jogo no navegador. Guarda token, `deployment` e o comando pendente na aba; reenvia o pendente até haver resposta. |
+| Gateway (`gateway.py`) | HTTP para o navegador. Sem estado: descobre qual nó atende (`PING` a cada 1 s) e encaminha cada comando sem alterá-lo. |
+| Nó (`servidor.py`) | Papel dinâmico: `ENTRANDO`, `RESERVA` ou `PRIMARIO`. O primário aplica as regras sob uma trava e replica cada alteração antes de responder. |
+| Regras (`forca/game.py`, `forca/lobby.py`) | Partida, salas, sessões, nomes únicos, recibos e coleta do estado. Não abrem sockets. |
 | Protocolo (`forca/wire.py`) | JSON UTF-8, um objeto por linha, com limite de tamanho. |
-| Docker Engine + Compose | Executar o servidor de forma padronizada em cada VM. |
-| VirtualBox | Uma VM Ubuntu por computador físico, com rede em modo bridge. |
-
-Infraestrutura da apresentação: dois computadores físicos, cada um com uma VM Ubuntu no VirtualBox e um container do servidor. Os clientes rodam com Python fora do Docker, no computador que permanecerá ligado ou em outros dispositivos da mesma rede.
+| Tailscale (container) | Rede privada entre as duas VMs e a Oracle, com nomes fixos (`forca-a`, `forca-b`, `forca-gateway`). |
+| Docker Compose | Um nó por VM (`compose.yaml`) e o gateway na Oracle (`deploy/oracle/compose.yaml`). |
+| VirtualBox | Uma VM Ubuntu em cada um dos dois PCs (requisito do trabalho). |
 
 ## Organização
 
 ```mermaid
 flowchart LR
-    C[Clientes] -->|TCP 5000: um comando por conexão| P
-    C -.->|Após a queda: TCP 5000| R
-    subgraph VM_A[VM no computador A]
-        P[Primário<br/>estado em RAM]
+    N[Navegadores] -->|HTTPS forca.ambrosias.dev| G
+    subgraph Oracle
+        G[Nginx + gateway<br/>sem estado]
     end
-    subgraph VM_B[VM no computador B]
-        R[Reserva<br/>cópia do estado em RAM]
+    G -->|Tailscale, TCP 5000| A
+    G -.->|se A não atende| B
+    subgraph PC_A[VM no PC A]
+        A[forca-a<br/>estado em RAM]
     end
-    R -->|TCP 5001: chave, estado + ACK, heartbeat| P
+    subgraph PC_B[VM no PC B]
+        B[forca-b<br/>cópia em RAM]
+    end
+    A <-->|Tailscale, TCP 5001: chave, estado + ACK, heartbeat| B
 ```
 
-Um único servidor aceita alterações por vez. O primário atende todas as salas; o reserva não abre a porta de jogadores até ser promovido. Não há banco de dados nem serviço externo: cada servidor guarda o estado em memória.
+Um único nó aceita alterações por vez. Os dois escutam as duas portas; quem não está atendendo responde `retry`, e o gateway passa ao outro. Não há banco de dados: cada nó guarda o estado em memória.
 
-**Interpretação de nó:** os nós do sistema distribuído são os dois servidores em computadores físicos diferentes. As salas são estruturas de dados dentro do primário, não processos separados. Essa interpretação deve ser validada com o professor.
+**Interpretação de nó:** os nós do sistema distribuído são os dois servidores em computadores físicos diferentes. O gateway é a porta de entrada e não guarda estado. As salas são estruturas de dados dentro do nó que atende, não processos separados.
 
-## Execução com Docker
+## Papéis dinâmicos
 
-- Um container por VM, com a mesma imagem (`python:3.12.13-slim`). O papel é definido por `MODO` no `.env`.
-- `compose.yaml` publica 5000 (jogadores) e 5001 (replicação) na VM. O servidor escuta em `0.0.0.0`.
-- O reserva conecta ao IP da VM primária (`PRIMARY_HOST`) na porta publicada 5001, apresentando `REPLICATION_KEY`.
-- `.dockerignore` exclui `.env`, sessões e arquivos gerados da imagem; `.env.example` documenta as variáveis.
-- `restart: "no"`: um antigo primário não pode voltar sozinho como ativo com o estado vazio. A recuperação entre computadores é feita pelo reserva, não pela política de reinício do Docker.
+| Papel | Atende? | Como chega a ele |
+| --- | --- | --- |
+| `ENTRANDO` | não | Ao iniciar, ou quando a sincronização inicial não se confirma |
+| `RESERVA` | não | Um primário sem reserva aceitou este nó e enviou a cópia completa |
+| `PRIMARIO` pausado | não | Os dois estavam entrando e este tem o nome menor (jogo novo), ou perdeu o reserva |
+| `PRIMARIO` com reserva | sim | Um reserva se juntou a ele |
+| `PRIMARIO` sozinho | sim | Era reserva e o primário caiu (promoção, `epoch` + 1) |
+
+- **Nenhum nó se declara primário sozinho.** Um jogo novo só nasce quando os dois estão `ENTRANDO` e se veem; o de nome menor cria.
+- **Quem volta vira reserva.** Um nó que reinicia fica `ENTRANDO` e se junta a quem está atendendo. Um primário pausado que encontra o outro atendendo descarta a própria cópia e vira reserva dele.
+- **Primário pausado volta a atender** quando o reserva reinicia vazio e se junta a ele.
+- `epoch` conta as promoções, é replicada e aparece no `PING`. O gateway prefere o nó que atende com a maior época.
+
+Consequência para o Docker: `restart: unless-stopped` é seguro, porque um nó que volta nunca assume sozinho.
 
 ## Entrada e comunicação
 
-1. O cliente gera um token aleatório, salva em `sessions/<nome>.json` e trava esse arquivo enquanto estiver aberto.
-2. Envia `ENTRAR` com o nome ao primeiro endereço da lista (`--servers` ou `CLIENT_SERVERS`).
-3. O servidor recusa o nome se outro jogador ativo já o usa (`NOME_EM_USO`). O nome de quem está há 180 s sem consultar e fora de uma partida em andamento pode ser reaproveitado. Depois, procura uma sala com um jogador aguardando e conectado.
-4. Se encontrar, ocupa a segunda vaga e inicia a partida com uma palavra sorteada; o primeiro a entrar começa.
-5. Se não encontrar, cria uma nova sala e o jogador aguarda.
-6. Ao reconectar enquanto espera, o cliente envia `ENTRAR` de novo. Se outra sala tiver alguém esperando e conectado, o servidor junta os dois e cancela a sala antiga.
+1. O navegador gera um token aleatório (32 bytes) e o guarda em `sessionStorage`: cada aba é um jogador.
+2. Envia `ENTRAR` com o nome. O comando pendente é salvo antes do envio e reenviado idêntico até haver resposta.
+3. O nó recusa o nome se outro jogador ativo já o usa (`NOME_EM_USO`). Depois procura uma sala com um jogador aguardando e conectado; se não houver, cria uma.
+4. Com dois jogadores, a partida começa com uma palavra sorteada no nó; o primeiro a entrar começa.
+5. Ao reconectar enquanto espera, a página envia `ENTRAR` de novo; se outra sala tiver alguém esperando, os dois se juntam.
 
-Depois disso, o cliente envia `ESTADO` a cada 0,5 s e `JOGAR`, `CHUTAR` ou `SAIR` quando o jogador digita. Cada comando abre uma conexão TCP curta, envia uma linha JSON, lê a resposta e fecha. A resposta sempre traz o estado público da sala; a palavra secreta só é enviada quando a partida termina. Detalhes em [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md).
+Depois disso, a página envia `ESTADO` a cada 1 s e `JOGAR`, `CHUTAR` ou `SAIR` quando o jogador age. Detalhes em [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md).
 
 ## Partidas e estado
-
-O servidor valida participante, turno, versão da sala e entrada antes de aplicar uma jogada. Jogadas fora da vez ou com versão antiga são recusadas sem alterar a partida.
 
 | Dados | Conteúdo |
 | --- | --- |
 | Jogadores | `player_id` (SHA-256 do token), nome, sala e se está ativo |
 | Salas | Participantes, palavra, letras, chutes errados, erros por jogador, turno, estado, versão, vencedor e motivo |
 | Recibos | Para cada jogador, só o último comando: `request_id`, impressão digital e resultado |
-| Controle | `deployment_id` da execução e `revision` global |
+| Controle | `deployment_id` da execução, `revision` global e `epoch` |
 
-A lista `forca/words.txt` é normalizada ao iniciar (acentos removidos, maiúsculas); uma linha com espaços, hífens ou números impede o servidor de subir. Letras e chutes com acento também são normalizados.
+Uma trava (`threading.Lock`) torna indivisível a sequência: copiar o estado → aplicar a regra → replicar e esperar ACK → adotar a cópia → responder. Uma requisição espera no máximo 2 s pela trava; depois disso recebe `retry`. Com os tempos do gateway (leitura de 8 s) e do navegador (20 s), uma requisição só é aplicada enquanto quem a enviou ainda espera a resposta, e uma cópia atrasada não pode ser aplicada depois do comando seguinte.
 
-Uma única trava (`threading.Lock`) torna indivisível a sequência: copiar o estado → aplicar a regra → replicar e esperar ACK → adotar a cópia → responder. Um `BoundedSemaphore` limita a 64 as conexões simultâneas.
+**Coleta:** ao fim de cada alteração, o nó libera quem sumiu há 180 s fora de partida em andamento, apaga jogadores inativos que nenhuma sala mostra e salas encerradas que ninguém consulta. O estado replicado depende de quantos jogam agora, não do histórico. Se mesmo assim passar de 2 MB, o comando é recusado (`ESTADO_CHEIO`) sem pausar o nó.
+
+A consulta de estado monta só a sala do jogador, não o mundo inteiro.
 
 ## Recuperação de falhas
 
-- **Replicação síncrona:** o primário envia o estado completo ao reserva e só responde ao jogador depois do ACK com a mesma revisão. Toda alteração confirmada existe nas duas máquinas.
-- **Sincronização inicial:** o reserva apresenta a chave (comparada em bytes, aceita acentos) e recebe o estado completo. Ele só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Por isso, se a cópia inicial falhar, o primário não precisa se pausar: espera outra tentativa.
-- **Heartbeat:** logo após o ACK inicial e depois a cada 0,5 s. O primário espera 3 s por resposta; o reserva espera 5 s.
-- **Queda do primário:** o reserva detecta o fechamento da conexão ou o timeout e se promove (`RESERVA_PROMOVIDO`), abrindo a porta 5000 com a última revisão recebida.
-- **Queda do reserva:** o primário se pausa e responde `retry` a tudo, pois não consegue obter a segunda cópia. É preciso reiniciar os dois servidores.
-- **Clientes:** em erro, timeout ou `retry`, tentam o próximo endereço da lista a cada 0,5 s, mantendo token e comando pendente. Nenhuma conexão TCP antiga é transferida.
-- **Reenvio:** o comando pendente mantém seu `request_id`. Os recibos são replicados; se a ação já foi aplicada, o reserva devolve o mesmo resultado sem repeti-la.
-- **Entradas malformadas:** comandos inválidos recebem "Comando inválido"; uma falha inesperada é registrada no log e respondida como erro interno, sem derrubar o servidor.
-- **Execuções diferentes:** o `deployment_id` salvo na sessão faz o cliente recusar um servidor de outra execução (resposta `fatal`).
+- **Replicação síncrona:** o primário envia o estado completo ao reserva e só responde depois do ACK com a mesma revisão.
+- **Sincronização inicial:** o reserva só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Se a cópia inicial falhar, o primário não se pausa.
+- **Heartbeat:** a cada 0,5 s. O primário espera 3 s; o reserva espera 5 s. O primário se pausa antes de o reserva assumir, então nunca há dois nós confirmando jogadas.
+- **Queda do primário:** o reserva detecta o fechamento da conexão (processo encerrado) ou o timeout (computador desligado) e assume com a última revisão.
+- **Queda do reserva:** o primário se pausa e responde `retry`. Quando o reserva volta, se junta a ele e o jogo continua.
+- **Gateway e navegador:** em `retry` ou falha, o gateway tenta o outro nó; sem nenhum, responde 503 e o navegador reenvia o mesmo comando.
+- **Reenvio:** os recibos são replicados; um reenvio após a troca devolve o resultado registrado sem repetir a jogada.
+- **Execuções diferentes:** se os dois nós reiniciarem, o `deployment_id` muda e o navegador volta à tela de nome (`fatal`).
 
 ## Acesso e limites
 
-A chave de replicação é comparada com `hmac.compare_digest`; o tráfego não usa TLS e fica restrito à rede local da apresentação. Tokens ficam só nos arquivos de sessão dos clientes, fora do Git e dos logs.
+A chave de replicação é comparada com `hmac.compare_digest`. O tráfego entre os nós e o gateway passa pelo Tailscale (cifrado); o público só alcança o gateway pelo HTTPS da Cloudflare. Tokens nunca são registrados em log: o gateway não registra requisições.
 
-O modelo supõe falha por parada, uma falha por vez, com a rede entre os equipamentos vivos funcionando. Como o primário não confirma nada sem o reserva, uma interrupção só da rede entre os servidores não gera dois históricos confirmados. Depois da promoção, porém, existe uma única cópia; não há reintegração automática do servidor que volta, e se os dois servidores pararem as partidas se perdem.
+O modelo supõe falha por parada, uma de cada vez. Com dois nós não há como distinguir queda de partição; a proteção vem de o primário nunca confirmar sem o reserva. Uma falha dupla (o promovido aceita jogadas e depois reinicia vazio enquanto o antigo está pausado) perde jogadas; evitá-la exige um terceiro nó como árbitro. Se os dois nós pararem, as partidas se perdem.

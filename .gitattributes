@@ -1,0 +1,5 @@
+# Scripts executados na VM Linux precisam de LF mesmo quando o projeto é copiado de um Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yaml text eol=lf
+.env.example text eol=lf

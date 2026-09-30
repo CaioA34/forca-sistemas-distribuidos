@@ -2,7 +2,7 @@
 
 Referências: [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), [especificação](docs/especificacao-jogo-forca.md) e [protocolo](docs/protocolo-etapa-1.md).
 
-A arquitetura adotada é **primário + reserva com estado em RAM e replicação síncrona**, usando só a biblioteca padrão do Python. Versões anteriores do plano previam Supabase, Tailscale e um processo por sala; essas ideias foram abandonadas para manter a solução autocontida nas duas VMs.
+A arquitetura adotada é **dois nós com papéis dinâmicos, estado em RAM e replicação síncrona**, jogados pelo navegador através de um gateway HTTP sem estado na instância Oracle. Os nós e o gateway se encontram pelo Tailscale, com nomes fixos, porque a rede da faculdade é restrita e os IPs mudam a cada rede. Só a biblioteca padrão do Python é usada.
 
 Legenda: `[x]` feito, `[ ]` pendente.
 
@@ -54,19 +54,25 @@ Legenda: `[x]` feito, `[ ]` pendente.
 - [x] Reserva se promove ao perder o primário e passa a atender na porta de jogadores.
 - [x] Clientes alternam entre os endereços configurados e retomam a sessão.
 - [x] Tratar a exceção do fechamento do canal de replicação em `Server.synchronize` (a thread terminava com traceback quando o reserva caía).
-- [ ] (Opcional) Reintegrar automaticamente um servidor que volta, como novo reserva.
+- [x] Papéis dinâmicos: um nó que volta entra como reserva de quem atende; primário pausado cede ao outro que assumiu ou volta a atender quando o reserva reinicia (`epoch` conta as promoções).
+- [x] Nenhum nó cria um jogo sozinho: com os dois entrando, o de nome menor cria.
+- [ ] (Opcional) Terceiro nó árbitro para cobrir falha dupla.
 
 **Concluído quando:** encerrar o primário durante duas partidas permite que ambas continuem no reserva, preservando turno, erros, letras e jogadores aguardando. ✔ em teste automatizado com processos locais (`tests/test_servidor.py`).
 
 ## 6. Docker e VMs
 
 - [x] `Dockerfile` (Python 3.12.13 slim), `compose.yaml`, `.dockerignore` e `.env.example`.
-- [x] Configuração por variáveis `MODO`, `PRIMARY_HOST` e `REPLICATION_KEY`; `.env` fora do Git e da imagem.
-- [x] `restart: "no"` para que um antigo primário não volte sozinho como ativo.
-- [ ] Preparar uma VM Ubuntu com rede Bridge em cada computador e validar a conectividade nas portas 5000 e 5001.
-- [ ] (Opcional) Executar o container com usuário sem privilégios.
+- [x] Configuração por `NODE_NAME`, `PEER`, `REPLICATION_KEY` e `TS_AUTHKEY`; `.env` fora do Git e da imagem.
+- [x] Container `tailscale` em cada VM (nomes fixos, sem IP nem bridge) e `restart: unless-stopped`, seguro com papéis dinâmicos.
+- [x] Gateway em container para a Oracle (`deploy/oracle/`) e site do Nginx.
+- [x] `scripts/preparar-vm.sh`: instala Docker, cria o `.env` e sobe o nó.
+- [x] Container executado com usuário sem privilégios.
+- [ ] Criar a tag, a regra de acesso e a chave no Tailscale (ver `docs/implantacao.md`).
+- [ ] Subir as duas VMs e o gateway; confirmar que `forca-a`/`forca-b` resolvem dentro do container (plano B: IPs `100.x`).
+- [ ] Publicar `forca.ambrosias.dev` no Nginx da Oracle.
 
-**Concluído quando:** clientes em outra máquina jogam contra o container da VM primária e o reserva sincroniza pela rede.
+**Concluído quando:** jogadores em qualquer rede abrem `forca.ambrosias.dev`, jogam, e os dois nós sincronizam pelo Tailscale.
 
 ## 7. Robustez e experiência de jogo
 
@@ -81,13 +87,18 @@ Legenda: `[x]` feito, `[ ]` pendente.
 - [x] Acentos aceitos em letras e chutes (`ç` → `C`, `conexão` → `CONEXAO`).
 - [x] `/estado` e `/ajuda` respondem mesmo sem conexão; `/estado` avisa quando não há servidor.
 
-**Concluído quando:** os cenários T20 a T25 da especificação passam. ✔
+- [x] Coleta do estado: partidas encerradas e jogadores que saíram são apagados; `ESTADO_CHEIO` recusa o comando em vez de pausar o nó.
+- [x] Espera pela trava limitada a 2 s: uma requisição atrasada não é aplicada depois do comando seguinte.
+- [x] Página web com teclado A–Z, dois bonecos, indicador do nó que atende e comando pendente salvo na aba.
+
+**Concluído quando:** os cenários T20 a T32 da especificação passam. ✔
 
 ## 8. Validação e apresentação
 
 - [x] Testes automatizados em `tests/` (regras, chute, salas, nomes únicos, cliente, reenvio e queda de processo), executados por `python -m unittest discover -s tests` ou `scripts/forca.ps1 testes`.
 - [x] Documentação alinhada ao código: README, ARCHITECTURE, especificação e protocolo.
-- [ ] Executar o roteiro da seção 13 da especificação com desligamento físico do computador do primário.
+- [x] Página verificada no navegador com dois jogadores: queda de `forca-a`, retorno como reserva e queda de `forca-b`, sem perder jogadas.
+- [ ] Executar o roteiro da seção 13 da especificação com desligamento físico do computador do nó que atende.
 - [ ] Medir e registrar o tempo de recuperação e o estado das salas antes e depois da queda.
 - [ ] Conferir os requisitos do professor, incluindo a interpretação de "nó".
 

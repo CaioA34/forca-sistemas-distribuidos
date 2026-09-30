@@ -23,7 +23,7 @@ from forca.wire import receive, send
 def exchange(address, command):
     host, port = address.rsplit(":", 1)
     with socket.create_connection((host, int(port)), timeout=2) as connection:
-        connection.settimeout(5)
+        connection.settimeout(8)  # Maior que a espera do servidor pela trava mais a replicação.
         with connection.makefile("rwb") as stream:
             send(stream, command)
             return receive(stream)
@@ -147,7 +147,7 @@ def run(name, servers, path, fresh=False):
             continue
         reconnected = not connected
         if reconnected:
-            print(f"Conectado a {address} ({response.get('role', '')}).")
+            print(f"Conectado a {address} ({response.get('node', '?')}, {response.get('role', '')}).")
             connected = True
         session["deployment"] = response.get("deployment", session["deployment"])
         if session["pending"]:

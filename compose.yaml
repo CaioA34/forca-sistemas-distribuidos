@@ -1,12 +1,36 @@
+# Um nó do jogo por VM. Copie .env.example para .env, preencha e rode: docker compose up -d --build
+# O container tailscale dá à VM o nome fixo NODE_NAME em qualquer rede; o servidor usa a rede dele.
 services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: ${NODE_NAME:?defina NODE_NAME no .env}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?defina TS_AUTHKEY no .env}
+      TS_HOSTNAME: ${NODE_NAME}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"  # Modo kernel: o servidor também abre conexões para o outro nó.
+      TS_ACCEPT_DNS: "true"  # Resolve forca-a e forca-b pelos nomes do Tailscale.
+    volumes:
+      - tailscale-state:/var/lib/tailscale  # Mantém identidade e endereço 100.x entre reinícios.
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
   servidor:
     build: .
+    network_mode: service:tailscale  # Portas 5000 e 5001 só na rede do Tailscale, não na rede local.
+    depends_on:
+      tailscale:
+        condition: service_started
+        restart: true
     environment:
-      MODO: ${MODO:-primario}
-      PRIMARY_HOST: ${PRIMARY_HOST:-127.0.0.1}
-      REPLICATION_KEY: ${REPLICATION_KEY:-forca-aula}
-    ports:
-      - "5000:5000"
-      - "5001:5001"
-    # Um antigo primário não deve retornar automaticamente como ativo.
-    restart: "no"
+      NODE_NAME: ${NODE_NAME}
+      PEER: ${PEER:?defina PEER no .env}
+      REPLICATION_KEY: ${REPLICATION_KEY:?defina REPLICATION_KEY no .env}
+    # Seguro com papéis dinâmicos: um nó que volta sempre entra como reserva de quem está atendendo.
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:

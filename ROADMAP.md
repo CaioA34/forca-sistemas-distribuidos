@@ -91,7 +91,11 @@ Legenda: `[x]` feito, `[ ]` pendente.
 - [x] Espera pela trava limitada a 2 s: uma requisição atrasada não é aplicada depois do comando seguinte.
 - [x] Página web com teclado A–Z, dois bonecos, indicador do nó que atende e comando pendente salvo na aba.
 
-**Concluído quando:** os cenários T20 a T32 da especificação passam. ✔
+- [x] Vitória por abandono: adversário fora por 30 s com o outro presente; falhas do sistema não contam.
+- [x] Chaves de replicação diferentes são avisadas no log dos dois nós.
+- [x] Vigia da rede: servidor e gateway se recuperam sozinhos quando o container `tailscale` reinicia.
+
+**Concluído quando:** os cenários T20 a T36 da especificação passam. ✔
 
 ## 8. Validação e apresentação
 

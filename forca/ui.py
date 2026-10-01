@@ -33,11 +33,13 @@ def outcome(state, player_id):
     if winner == player_id:
         details = {"PALAVRA_COMPLETA": "Você completou a palavra.",
                    "SEIS_ERROS": f"{names[loser]} chegou a seis erros.",
-                   "DESISTENCIA": f"{names[loser]} desistiu."}
+                   "DESISTENCIA": f"{names[loser]} desistiu.",
+                   "ABANDONO": f"{names[loser]} não voltou a tempo."}
         return "Você venceu! " + details.get(state["reason"], "")
     details = {"PALAVRA_COMPLETA": f"{names[winner]} completou a palavra.",
                "SEIS_ERROS": "Você chegou a seis erros.",
-               "DESISTENCIA": "Você desistiu."}
+               "DESISTENCIA": "Você desistiu.",
+               "ABANDONO": "Você ficou fora da partida por tempo demais."}
     return f"Você perdeu. {details.get(state['reason'], '')}"
 
 
@@ -69,7 +71,7 @@ def render(state, player_id):
         lines.append("A partida começa quando o segundo jogador entrar.")
     elif state["status"] == "PAUSADA":
         absent = ", ".join(p["name"] for p in players if not p["connected"])
-        lines.append(f"Partida pausada. Aguardando reconexão: {absent}.")
+        lines.append(f"Partida pausada. Aguardando reconexão: {absent}. Sem volta em 30 s, a vitória é sua.")
     elif state["status"] == "EM_JOGO":
         current = next(p["name"] for p in players if p["player_id"] == state["turn"])
         lines.append("Sua vez! Tente uma letra ou chute a palavra." if state["turn"] == player_id

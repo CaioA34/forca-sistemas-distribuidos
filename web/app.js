@@ -229,11 +229,13 @@ function outcome(s) {
   if (s.winner === view.me) {
     const why = { PALAVRA_COMPLETA: "Você completou a palavra.",
                   SEIS_ERROS: `${names[loser]} chegou a seis erros.`,
-                  DESISTENCIA: `${names[loser]} desistiu.` };
+                  DESISTENCIA: `${names[loser]} desistiu.`,
+                  ABANDONO: `${names[loser]} não voltou a tempo.` };
     return `Você venceu! ${why[s.reason] || ""}`;
   }
   const why = { PALAVRA_COMPLETA: `${names[s.winner]} completou a palavra.`,
-                SEIS_ERROS: "Você chegou a seis erros.", DESISTENCIA: "Você desistiu." };
+                SEIS_ERROS: "Você chegou a seis erros.", DESISTENCIA: "Você desistiu.",
+                ABANDONO: "Você ficou fora da partida por tempo demais." };
   return `Você perdeu. ${why[s.reason] || ""}`;
 }
 
@@ -241,7 +243,7 @@ function turnText(s) {
   if (s.status === "AGUARDANDO") return "A partida começa quando o segundo jogador entrar.";
   if (s.status === "PAUSADA") {
     const absent = s.players.filter((p) => !p.connected).map((p) => p.name).join(", ");
-    return `Partida pausada. Aguardando reconexão: ${absent}.`;
+    return `Partida pausada. Aguardando reconexão: ${absent}. Sem volta em 30 s, a vitória é sua.`;
   }
   if (s.status === "EM_JOGO") {
     if (s.turn === view.me) return "Sua vez! Escolha uma letra ou chute a palavra.";

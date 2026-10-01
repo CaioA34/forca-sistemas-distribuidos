@@ -132,7 +132,9 @@ O teclado físico também envia letras. Enquanto um comando espera resposta, a p
 
 ### 5.3 Desconexão e desistência
 
-Quando um cliente para de consultar, a sala aparece pausada após 5 segundos e a vaga é preservada. Uma reconexão com a mesma sessão retoma a sala original. Não há limite de tempo para escolher uma letra; o adversário pode encerrar a partida com Sair. Se os dois participantes passarem 180 segundos sem consultar, a partida é cancelada com o motivo ABANDONO.
+Quando um cliente para de consultar, a sala aparece pausada após 5 segundos e a vaga é preservada. Uma reconexão com a mesma sessão retoma a sala original. Não há limite de tempo para escolher uma letra enquanto o jogador está com a página aberta.
+
+**RF09 Vitória por abandono.** Se um participante fica 30 segundos sem consultar o servidor enquanto o adversário permanece presente, a partida termina com vitória de quem ficou e motivo ABANDONO. O prazo conta a partir do que for mais recente: a última consulta do ausente ou o início da presença contínua de quem ficou. Depois de uma troca de servidor ou de uma retomada do nó, os prazos recomeçam. Assim, uma falha do sistema não dá vitória a ninguém. Se os dois participantes passarem 180 segundos sem consultar, a partida é cancelada, sem vencedor.
 
 Um jogador sozinho que envia SAIR cancela a sala. Em uma partida iniciada, SAIR caracteriza desistência e dá a vitória ao adversário. Em ambos os casos o jogador deixa de estar ativo e seu nome é liberado. Um novo jogador nunca substitui um participante ausente.
 
@@ -278,7 +280,9 @@ Cada VM executa um projeto Compose com dois serviços: tailscale, que dá à VM 
 
 Uma VM Linux por computador, com 2 vCPUs, 2 GB de RAM e 15 GB de disco, é uma configuração inicial suficiente. Usar a mesma distribuição e versões nas duas VMs facilita a reprodução.
 
-As variáveis opcionais BOOT_WAIT e SOLO_WAIT mudam os 10 e os 7 segundos das seções 8.2 e 8.3.
+As variáveis opcionais BOOT_WAIT e SOLO_WAIT mudam os 10 e os 7 segundos das seções 8.2 e 8.3, e ABANDON_WAIT muda os 30 segundos da vitória por abandono.
+
+O servidor e o gateway usam a rede do container tailscale. Se só esse container reiniciar, uma vigia no processo percebe que a rede deixou de existir e o encerra; a política de reinício do Docker o traz de volta na rede nova.
 
 A rede da VM pode ficar em NAT: o Tailscale atravessa NAT e firewalls, e usa servidores intermediários quando a conexão direta é bloqueada. Não é preciso IP fixo, modo bridge nem liberar portas na rede da faculdade.
 
@@ -288,7 +292,7 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 
 ## 11 Observabilidade e critérios de qualidade
 
-**RN01 Logs.** O nó registra horário, portas, criação do jogo, sincronização do reserva, cada revisão confirmada com o tipo de comando, perda do reserva, cessão do papel e promoção com a revisão e a época assumidas. O gateway registra quando cada nó passa a atender ou deixa de atender. Tokens e palavras secretas não são registrados.
+**RN01 Logs.** O nó registra horário, portas, criação do jogo, sincronização do reserva, cada revisão confirmada com o tipo de comando ou a vitória por abandono, perda do reserva, cessão do papel, promoção com a revisão e a época assumidas e chave de replicação recusada. O gateway registra quando cada nó passa a atender ou deixa de atender. Tokens e palavras secretas não são registrados.
 
 **RN02 Metas.** Na rede local, demonstrar pelo menos cinco clientes em três salas, confirmação de jogada perceptivelmente imediata e recuperação em até 15 segundos após desligar o primário. São metas a medir na apresentação; a integridade do estado tem prioridade sobre a velocidade.
 
@@ -332,8 +336,12 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 | T30 | Partida pelo gateway com queda do nó que atende | Mesmo endereço, estado idêntico, reenvio sem efeito duplo |
 | T31 | Muitas partidas encerradas | Estado replicado não cresce; comando que passaria de 2 MB é recusado sem pausar |
 | T32 | Corpo HTTP inválido ou caminho fora da lista | 400, 404 ou 413, sem derrubar o gateway |
+| T33 | Adversário fora por 30 s com o outro presente | Vitória de quem ficou, motivo ABANDONO, replicada ao reserva |
+| T34 | Os dois fora, ou troca de servidor durante a ausência | Ninguém vence; o prazo recomeça |
+| T35 | Chaves de replicação diferentes | Cada nó atende sozinho e os dois registram o erro no log |
+| T36 | Container de rede reiniciado sozinho | O servidor se encerra, é reiniciado e volta a responder |
 
-A pasta tests contém testes automatizados com unittest para T01 a T10, T12 (reenvio após a troca de servidor), T13, T16 a T25 e T26 a T32 (em T20 e T21, a parte que depende do teclado e da reconexão do cliente foi verificada manualmente), com os nós e o gateway em processos reais e TCP local. A página foi verificada no navegador com dois jogadores e a sequência completa: queda de forca-a, retorno como reserva e queda de forca-b. Eles são executados com python -m unittest discover -s tests.
+A pasta tests contém testes automatizados com unittest para T01 a T10, T12 (reenvio após a troca de servidor), T13, T16 a T25 e T26 a T36 (em T20 e T21, a parte que depende do teclado e da reconexão do cliente foi verificada manualmente), com os nós e o gateway em processos reais e TCP local. A página foi verificada no navegador com dois jogadores e a sequência completa: queda de forca-a, retorno como reserva e queda de forca-b. Eles são executados com python -m unittest discover -s tests.
 
 ### 12.2 Execução dos testes de falha
 
@@ -364,6 +372,7 @@ Os jogadores devem usar equipamentos que fiquem ligados. Desligar o computador d
 | forca/game.py | Regras puras, validação de letras e resultado |
 | forca/lobby.py | Salas, vagas, sessões, entrada, saída, recibos e coleta do estado |
 | forca/wire.py | Envio e leitura de JSON por linha |
+| forca/rede.py | Vigia da rede do container |
 | servidor.py | Nó: papéis dinâmicos, sockets, threads, trava, replicação, heartbeat e promoção |
 | gateway.py | HTTP para o navegador e roteamento para o nó que atende |
 | web/ | Página do jogo |

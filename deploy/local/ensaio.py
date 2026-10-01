@@ -143,7 +143,21 @@ def main():
     wait(serving("forca-b", 4), "forca-b assumiu (época 4)")
     wait(lambda: snapshot(ana, bruno) == before, "partida idêntica, com a jogada feita com uma cópia só")
     docker("start", "local-forca-a-1")
-    print("\nENSAIO OK:", snapshot(ana, bruno))
+    wait(lambda: status().get("forca-a") == ("RESERVA", False, 4), "forca-a voltou como RESERVA")
+
+    print("\n6) Bruno fecha a página e não volta: em 30 s Ana vence por abandono")
+    snapshot(ana, bruno)  # Última consulta de Bruno.
+    start = time.monotonic()
+
+    def ended():
+        state = ana.state().get("state") or {}
+        return state.get("status") == "ENCERRADA" and state
+    wait(ended, "partida encerrada", seconds=50)
+    final, me = ana.state()["state"], ana.state()["player_id"]
+    assert (final["reason"], final["winner"]) == ("ABANDONO", me), final
+    assert time.monotonic() - start >= 28, "encerrou antes do prazo"
+    wait(lambda: status()["forca-a"][2:] == status()["forca-b"][2:], "reserva recebeu o resultado")
+    print("\nENSAIO OK:", {k: final[k] for k in ("room_id", "status", "reason", "guesses", "masked_word")})
 
 
 if __name__ == "__main__":

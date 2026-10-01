@@ -10,7 +10,8 @@ import threading
 import time
 
 from forca.game import load_words
-from forca.lobby import NAME_HOLD, apply, new_state, player_id, public_state
+from forca.lobby import NAME_HOLD, apply, new_state, player_id, public_state, walkover
+from forca.rede import watch_network
 from forca.wire import encode, receive, send, write
 
 LOG = logging.getLogger("forca")
@@ -24,15 +25,19 @@ PRIMARY_WAIT = 3   # O primário espera ACK e heartbeat por até 3 s...
 BACKUP_WAIT = 5    # ...e o reserva espera o primário por 5 s: o primário se pausa antes de o reserva assumir.
 JOIN_RETRY = 1
 BOOT_WAIT = 10     # Ao iniciar, procura o outro nó por este tempo antes de criar um jogo sozinho.
+ABANDON_WAIT = 30  # Adversário fora por este tempo, com o outro jogador presente: vitória de quem ficou.
+KEY_WARNING = 60   # Intervalo mínimo entre avisos de chave de replicação recusada.
 SOLO_WAIT = 7      # Ao perder o reserva, espera mais que BACKUP_WAIT antes de seguir sozinho: se foi a
                    # rede que caiu, o reserva já assumiu e o gateway já mandou os jogadores para ele.
 
 
 class Server:
     def __init__(self, node="forca-a", peer="127.0.0.1:5003", host="0.0.0.0", port=5000,
-                 sync_port=5001, key="forca-aula", words=None, boot_wait=BOOT_WAIT, solo_wait=SOLO_WAIT):
+                 sync_port=5001, key="forca-aula", words=None, boot_wait=BOOT_WAIT, solo_wait=SOLO_WAIT,
+                 abandon_wait=ABANDON_WAIT):
         self.node, self.peer = node, peer
-        self.boot_wait, self.solo_wait = boot_wait, solo_wait
+        self.boot_wait, self.solo_wait, self.abandon_wait = boot_wait, solo_wait, abandon_wait
+        self.key_warned = 0.0
         self.host, self.port, self.sync_port = host, port, sync_port
         self.key = key
         self.words = load_words(words or WORDS.read_text(encoding="utf-8").splitlines())
@@ -43,6 +48,7 @@ class Server:
         self.held = False      # Em espera após perder o reserva; serve para avisar uma vez no log.
         self.joining_since = time.monotonic()
         self.seen = {}        # Presença local; uma conexão antiga não migra entre máquinas.
+        self.present = {}     # Desde quando cada jogador consulta sem interrupção.
         self.since = time.monotonic()  # Início do atendimento; após a promoção, recomeça.
         self.lock = threading.Lock()   # Papel, estado e canal do reserva mudam juntos.
         self.slots = threading.BoundedSemaphore(64)
@@ -75,7 +81,7 @@ class Server:
     def create(self, reason):
         """Chamado com a trava. Começa um jogo novo; este nó atende já, mesmo sem reserva."""
         self.state, self.role, self.hold_until = new_state(), PRIMARY, 0.0
-        self.since, self.seen = time.monotonic(), {}
+        self.forget_presence()
         LOG.info("%s: %s cria um jogo novo e atende sem segunda cópia até o outro nó entrar.", reason, self.node)
 
     # Canal dos jogadores -----------------------------------------------------------------------
@@ -93,6 +99,36 @@ class Server:
         now = time.monotonic()
         return {pid for pid in self.state["world"]["players"]
                 if now - self.seen.get(pid, self.since) >= NAME_HOLD}
+
+    def forget_presence(self):
+        """Chamado com a trava, quando o nó começa ou volta a atender: a contagem de ausência recomeça."""
+        self.since, self.seen, self.present = time.monotonic(), {}, {}
+
+    def arrive(self, pid):
+        """Registra a consulta. Uma volta depois de ONLINE s sem consultar inicia nova presença contínua."""
+        now = time.monotonic()
+        if now - self.seen.get(pid, float("-inf")) >= ONLINE:
+            self.present[pid] = now
+        self.seen[pid] = now
+        for gone in [p for p in self.present if p not in self.seen]:
+            del self.present[gone]
+        return now
+
+    def abandoned(self, pid, now):
+        """Sala em andamento em que pid está presente há abandon_wait s e um adversário não consultou nesse tempo.
+
+        O prazo conta a partir do que for mais recente: a última consulta do adversário ou o início da
+        presença de quem ficou. Assim uma queda do gateway ou uma troca de servidor não dá vitória a ninguém.
+        """
+        world = self.state["world"]
+        room = world["rooms"].get((world["players"].get(pid) or {}).get("room_id"))
+        if not room or room["status"] != "EM_JOGO":
+            return None
+        here = self.present.get(pid, now)
+        for other in room["players"]:
+            if other != pid and now - max(self.seen.get(other, self.since), here) >= self.abandon_wait:
+                return room["id"]
+        return None
 
     def replicate(self, candidate, data=None):
         # O reserva guarda a cópia ANTES de enviar ACK. Só então o jogador recebe sucesso.
@@ -114,11 +150,15 @@ class Server:
             deployment = command.get("deployment")
             if deployment and deployment != self.state["world"]["deployment_id"]:
                 return {"fatal": True, "message": "Esta sessão pertence a outra execução. Entre de novo."}
-            self.seen[pid] = time.monotonic()
-            result = {"ok": True}
-            if command.get("type") != "ESTADO":
+            now = self.arrive(pid)
+            result, candidate, what = {"ok": True}, None, command.get("type")
+            if what != "ESTADO":
                 candidate = copy.deepcopy(self.state)
                 result = apply(candidate, command, self.online(), self.words, self.idle())
+            elif room_id := self.abandoned(pid, now):
+                candidate, what = copy.deepcopy(self.state), f"vitória por abandono na {room_id}"
+                walkover(candidate, room_id, pid)
+            if candidate is not None:
                 try:
                     data = encode({"state": candidate})
                 except ValueError:
@@ -132,7 +172,7 @@ class Server:
                             self.lose_backup("a replicação falhou")
                             return {"retry": True, "message": "Replicação interrompida. Procurando outro servidor."}
                     self.state = candidate
-                    LOG.info("Estado %s confirmado (%s).", self.state["revision"], command.get("type"))
+                    LOG.info("Estado %s confirmado (%s).", self.state["revision"], what)
             return {**result, "player_id": pid, "deployment": self.state["world"]["deployment_id"],
                     "state": public_state(self.state, pid, self.online()),
                     "role": self.role, "node": self.node}
@@ -208,6 +248,7 @@ class Server:
         hello = receive(stream)
         # Em bytes: compare_digest recusa texto com acentos, o que derrubaria esta thread.
         if not hmac.compare_digest(str(hello.get("key", "")).encode(), self.key.encode()):
+            self.warn_key(f"{hello.get('node', 'Um visitante')} apresentou uma chave de replicação diferente")
             return
         with self.lock:
             if not self.accepts(hello):
@@ -225,7 +266,7 @@ class Server:
                 return
             if paused:
                 # Pausado, o nó não registrou presença: quem consultou o tempo todo não pode parecer sumido.
-                self.since, self.seen = time.monotonic(), {}
+                self.forget_presence()
             self.held = False
             LOG.info("Reserva %s sincronizado na revisão %s. Agora há duas cópias.",
                      hello.get("node", "?"), self.state["revision"])
@@ -242,6 +283,13 @@ class Server:
             with self.lock:
                 if self.backup is stream:
                     self.lose_backup("o reserva parou de responder")
+
+    def warn_key(self, what):
+        """Chaves diferentes fazem cada nó atender sozinho, sem erro aparente: o aviso precisa ser claro."""
+        now = time.monotonic()
+        if now - self.key_warned >= KEY_WARNING or not self.key_warned:
+            self.key_warned = now
+            LOG.error("%s. REPLICATION_KEY precisa ser igual nos dois nós; sem isso eles não se sincronizam.", what)
 
     def lose_backup(self, reason):
         """Chamado com a trava. Sem a segunda cópia, o primário se pausa por SOLO_WAIT e procura o outro nó."""
@@ -278,7 +326,11 @@ class Server:
             with connection.makefile("rwb") as stream:
                 with self.lock:
                     send(stream, {**self.status(), "key": self.key})
-                first = receive(stream)
+                try:
+                    first = receive(stream)
+                except ConnectionError:  # Conectou e foi dispensado sem resposta: é o que faz quem recusa a chave.
+                    self.warn_key(f"{self.peer} fechou a conexão sem responder; provável chave de replicação diferente")
+                    raise
                 if "state" not in first:
                     self.consider(first)
                     return
@@ -332,7 +384,7 @@ class Server:
                 return
             self.state["epoch"] += 1
             self.role, self.hold_until = PRIMARY, 0.0
-            self.since, self.seen = time.monotonic(), {}  # Os jogadores ainda vão reconectar: ninguém perde o nome já.
+            self.forget_presence()  # Os jogadores ainda vão reconectar: ninguém perde o nome nem a partida já.
             LOG.warning("PRIMÁRIO CAIU: %s assumiu na revisão %s (época %s). Agora há apenas uma cópia.",
                         self.node, self.state["revision"], self.state["epoch"])
 
@@ -356,13 +408,16 @@ def main():
                         help="Segundos procurando o outro nó ao iniciar, antes de criar um jogo sozinho.")
     parser.add_argument("--solo-wait", type=float, default=float(os.getenv("SOLO_WAIT", SOLO_WAIT)),
                         help="Segundos de pausa ao perder o reserva, antes de seguir sozinho.")
+    parser.add_argument("--abandon-wait", type=float, default=float(os.getenv("ABANDON_WAIT", ABANDON_WAIT)),
+                        help="Segundos com o adversário fora até a vitória de quem ficou.")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     try:
         server = Server(args.node, args.peer, args.host, args.port, args.sync_port, args.key,
-                        boot_wait=args.boot_wait, solo_wait=args.solo_wait)
+                        boot_wait=args.boot_wait, solo_wait=args.solo_wait, abandon_wait=args.abandon_wait)
     except ValueError as exc:
         raise SystemExit(f"Lista de palavras inválida ({WORDS.name}): {exc}")
+    watch_network(LOG)
     try:
         server.run()
     except KeyboardInterrupt:

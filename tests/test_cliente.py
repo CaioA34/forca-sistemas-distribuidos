@@ -6,6 +6,8 @@ import unittest
 
 from cliente import lock, parse
 from forca.ui import HELP, outcome, render
+from forca.rede import watch_network
+import forca.rede
 from forca.wire import MAX_BYTES, receive, send
 
 STATE = {"room_id": "sala-1", "room_version": 3, "status": "EM_JOGO",
@@ -89,6 +91,46 @@ class SessionLockTests(unittest.TestCase):
             second = lock(path)
             self.assertIsNotNone(second)
             second.close()
+
+
+
+class AbandonmentTextTests(unittest.TestCase):
+    def test_resultado_por_abandono(self):
+        state = {**STATE, "status": "ENCERRADA", "winner": "a", "reason": "ABANDONO", "turn": None}
+        self.assertEqual(outcome(state, "a"), "Você venceu! Bruno não voltou a tempo.")
+        self.assertEqual(outcome(state, "b"), "Você perdeu. Você ficou fora da partida por tempo demais.")
+
+    def test_pausa_avisa_o_prazo(self):
+        players = [{**STATE["players"][0]}, {**STATE["players"][1], "connected": False}]
+        screen = render({**STATE, "status": "PAUSADA", "players": players}, "a")
+        self.assertIn("Aguardando reconexão: Bruno. Sem volta em 30 s, a vitória é sua.", screen)
+
+
+class NetworkWatchTests(unittest.TestCase):
+    """O processo se encerra quando a rede em que nasceu some (container de rede reiniciado)."""
+
+    def watch(self, sequence):
+        answers, exits = iter(sequence), []
+        original = forca.rede.external_interfaces
+        forca.rede.external_interfaces = lambda: next(answers, set())
+        self.addCleanup(setattr, forca.rede, "external_interfaces", original)
+        thread = watch_network(type("Log", (), {"error": staticmethod(lambda *a: None)}), check=0.02,
+                               leave=exits.append)
+        if thread:
+            thread.join(2)
+        return thread, exits
+
+    def test_encerra_quando_as_interfaces_somem(self):
+        thread, exits = self.watch([{"eth0"}, {"eth0", "tailscale0"}, set(), set()])
+        self.assertEqual(exits, [1])
+
+    def test_uma_falha_isolada_nao_encerra(self):
+        thread, exits = self.watch([{"eth0"}] + [{"eth0"}, set()] * 20 + [{"eth0"}] * 200)
+        self.assertEqual(exits, [])
+
+    def test_sem_rede_desde_o_inicio_nao_vigia(self):
+        thread, exits = self.watch([set()])
+        self.assertIsNone(thread)
 
 
 if __name__ == "__main__":

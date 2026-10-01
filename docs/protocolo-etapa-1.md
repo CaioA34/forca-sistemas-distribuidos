@@ -82,8 +82,8 @@ até 64 conexões simultâneas; as excedentes são fechadas.
   Um jogador deixa de ser ativo ao enviar `SAIR`, ou quando fica 180 s sem
   consultar o servidor fora de uma partida em andamento (`NAME_HOLD` em
   `forca/lobby.py`). Nesse caso, a sala em que ele esperava é cancelada. Uma
-  partida em andamento é cancelada (`ABANDONO`) quando os dois participantes
-  passam 180 s sem consultar.
+  partida em andamento é cancelada (`ABANDONO`, sem vencedor) quando os dois
+  participantes passam 180 s sem consultar.
 - `letter` e `word`: acentos são removidos e o texto é convertido para
   maiúsculas antes da validação (`ç` vale `C`; `conexão` vale `CONEXAO`).
 - `word`: 1 a 30 letras, sem espaços, hífens ou números.
@@ -139,11 +139,24 @@ qualquer comando diferente de `PING` recebe `retry`.
 | `wrong_words` | Palavras chutadas sem acerto, em ordem |
 | `turn` | `player_id` da vez, ou `null` |
 | `winner` | `player_id` do vencedor, ou `null` |
-| `reason` | `PALAVRA_COMPLETA`, `SEIS_ERROS`, `DESISTENCIA` ou `null`. Salas canceladas internamente usam `REAGRUPADA` ou `ABANDONO`, mas nenhum jogador fica associado a elas |
+| `reason` | `PALAVRA_COMPLETA`, `SEIS_ERROS`, `DESISTENCIA`, `ABANDONO` ou `null`. Salas canceladas internamente usam `REAGRUPADA` ou `ABANDONO` sem vencedor, mas nenhum jogador fica associado a elas |
 | `max_errors` | 6 |
 
 `PAUSADA` não é armazenado: é calculado quando a sala está `EM_JOGO` e algum
 participante não consultou o servidor nos últimos 5 s.
+
+### Vitória por abandono
+
+`ESTADO` não altera o estado, com uma exceção: se a sala do jogador está
+`EM_JOGO` e o adversário não consultou o servidor nos últimos 30 s
+(`ABANDON_WAIT`), contados enquanto quem consulta esteve presente sem
+interrupção, o nó encerra a partida com `winner` igual a quem ficou e `reason`
+`ABANDONO`. A alteração é replicada antes da resposta, como uma jogada, e a
+resposta desse `ESTADO` já traz a sala `ENCERRADA`. O jogador ausente, ao
+voltar, recebe o mesmo estado.
+
+Uma volta depois de 5 s sem consultar inicia uma nova presença, e uma promoção
+ou retomada do nó zera a presença de todos: os 30 s recomeçam.
 
 ### Códigos de erro
 
@@ -202,7 +215,8 @@ quem está `ENTRANDO`, para se juntar; quem é primário sozinho, para descobrir
 se há outro primário.
 
 1. Quem procura → outro nó: `{"key", "node", "role", "serving", "epoch",
-   "revision"}`. Chave incorreta: a conexão é fechada (comparação com
+   "revision"}`. Chave incorreta: a conexão é fechada e os dois lados
+   registram no log que `REPLICATION_KEY` precisa ser igual (comparação com
    `hmac.compare_digest` sobre os bytes UTF-8, o que aceita chaves com acento).
 2. O outro nó **aceita** se for `PRIMARIO` sem reserva e o visitante estiver
    `ENTRANDO`, ou se o visitante também for `PRIMARIO` e tiver menos jogadas

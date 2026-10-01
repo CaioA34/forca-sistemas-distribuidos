@@ -13,6 +13,7 @@ import socket
 import threading
 import time
 
+from forca.rede import watch_network
 from forca.wire import receive, send
 
 LOG = logging.getLogger("forca.gateway")
@@ -165,6 +166,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     gateway = Gateway([s.strip() for s in args.servers.split(",") if s.strip()])
     gateway.start()
+    watch_network(LOG)
     Handler.gateway = gateway
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True

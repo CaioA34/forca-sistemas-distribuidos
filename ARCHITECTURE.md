@@ -13,6 +13,7 @@ Jogo da forca com até dois jogadores por sala, várias partidas simultâneas e 
 | Nó (`servidor.py`) | Papel dinâmico: `ENTRANDO`, `RESERVA` ou `PRIMARIO`. O primário aplica as regras sob uma trava e replica cada alteração antes de responder. |
 | Regras (`forca/game.py`, `forca/lobby.py`) | Partida, salas, sessões, nomes únicos, recibos e coleta do estado. Não abrem sockets. |
 | Protocolo (`forca/wire.py`) | JSON UTF-8, um objeto por linha, com limite de tamanho. |
+| Vigia da rede (`forca/rede.py`) | Encerra o servidor ou o gateway se a rede do container sumir; o Docker o reinicia na rede nova. |
 | Tailscale (container) | Rede privada entre as duas VMs e a Oracle, com nomes fixos (`forca-a`, `forca-b`, `forca-gateway`). |
 | Docker Compose | Um nó por VM (`compose.yaml`) e o gateway na Oracle (`deploy/oracle/compose.yaml`). |
 | VirtualBox | Uma VM Ubuntu em cada um dos dois PCs (requisito do trabalho). |
@@ -59,6 +60,8 @@ Um único nó aceita alterações por vez. Os dois escutam as duas portas; quem 
 
 Consequência para o Docker: `restart: unless-stopped` é seguro, porque um nó que volta procura o outro antes de qualquer coisa.
 
+O servidor e o gateway usam a rede do container `tailscale`. Se só aquele container reinicia, o processo ficaria vivo dentro de uma rede que não existe mais. A vigia (`forca/rede.py`) percebe que as interfaces sumiram e encerra o processo; a política de reinício o traz de volta já na rede nova, em cerca de 5 a 10 s.
+
 ## Entrada e comunicação
 
 1. O navegador gera um token aleatório (32 bytes) e o guarda em `sessionStorage`: cada aba é um jogador.
@@ -94,6 +97,16 @@ A consulta de estado monta só a sala do jogador, não o mundo inteiro.
 - **Gateway e navegador:** em `retry` ou falha, o gateway tenta o outro nó; sem nenhum, responde 503 e o navegador reenvia o mesmo comando.
 - **Reenvio:** os recibos são replicados; um reenvio após a troca devolve o resultado registrado sem repetir a jogada.
 - **Execuções diferentes:** se os dois nós reiniciarem, o `deployment_id` muda e o navegador volta à tela de nome (`fatal`).
+- **Chaves diferentes:** os nós não se sincronizam e cada um atende sozinho; os dois registram o erro no log, no máximo uma vez por minuto.
+
+## Abandono
+
+A presença dos jogadores é local ao nó que atende e não é replicada. Com ela o nó decide duas coisas:
+
+- **Pausa:** partida em andamento com um participante sem consultar há 5 s aparece `PAUSADA`.
+- **Vitória por abandono:** se o adversário fica 30 s sem consultar enquanto o outro jogador segue presente, a partida termina com vitória de quem ficou (motivo `ABANDONO`). A decisão sai na consulta de estado de quem ficou e é gravada como qualquer jogada: copiada, replicada e só então respondida.
+
+O prazo conta a partir do que for mais recente: a última consulta do adversário ou o início da presença contínua de quem ficou. Depois de uma promoção ou de uma retomada, o nó esquece a presença e todos os prazos recomeçam. Assim, uma queda do gateway, uma troca de servidor ou a volta de quem também esteve fora não dão vitória a ninguém.
 
 ## Acesso e limites
 

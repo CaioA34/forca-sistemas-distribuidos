@@ -67,7 +67,7 @@ class Processes(unittest.TestCase):
         self.processes = []
         self.ports = {name: (free_port(), free_port()) for name in ("forca-a", "forca-b")}
 
-    def start(self, name, peer_sync=None):
+    def start(self, name, peer_sync=None, extra=()):
         game, sync = self.ports[name]
         other = next(n for n in self.ports if n != name)
         environment = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
@@ -75,7 +75,7 @@ class Processes(unittest.TestCase):
             [sys.executable, "servidor.py", "--node", name, "--host", "127.0.0.1",
              "--port", str(game), "--sync-port", str(sync),
              "--peer", f"127.0.0.1:{peer_sync or self.ports[other][1]}",
-             "--boot-wait", "3", "--solo-wait", "2"],  # Esperas curtas para o teste não demorar.
+             "--boot-wait", "3", "--solo-wait", "2", *extra],  # Esperas curtas para o teste não demorar.
             cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.processes.append(process)
         return process
@@ -229,6 +229,18 @@ class LoneNodeTests(Processes):
         self.assertNotIn("Traceback", log)
 
 
+    def test_chaves_diferentes_avisam_no_log(self):
+        a, b = self.game("forca-a"), self.game("forca-b")
+        self.a = self.start("forca-a", extra=("--key", "uma-chave"))
+        self.b = self.start("forca-b", extra=("--key", "outra-chave"))
+        wait_for(lambda: serving(a) and serving(b))  # Sem se entender, cada um cria o próprio jogo.
+        logs = self.stop(self.a) + self.stop(self.b)
+        self.assertIn("REPLICATION_KEY precisa ser igual nos dois nós", logs)
+        self.assertIn("apresentou uma chave de replicação diferente", logs)
+        self.assertIn("fechou a conexão sem responder", logs)
+        self.assertNotIn("Traceback", logs)
+
+
 class InitialSyncTests(Processes):
     def test_chave_com_acento_e_reserva_que_some_nao_travam_o_primario(self):
         self.a, self.b = self.start("forca-a"), self.start("forca-b")
@@ -336,6 +348,51 @@ class InProcessTests(unittest.TestCase):
         self.assertTrue(a.request(command("Bruno", "ENTRAR", name="Bruno"))["ok"])
         view = a.request({"type": "ESTADO", "token": token("Ana")})["state"]
         self.assertEqual((view["room_id"], view["status"]), ("sala-1", "AGUARDANDO"))
+
+    def match(self, wait=0.6):
+        """Primário sozinho com Ana e Bruno em partida; devolve o servidor e uma função de consulta."""
+        server = self.node("forca-a", 0, PRIMARY, state=new_state())
+        server.abandon_wait = wait
+        for who in ("Ana", "Bruno"):
+            server.request(command(who, "ESTADO"))
+            self.assertTrue(server.request(command(who, "ENTRAR", name=who))["ok"])
+
+        def view(who):
+            return server.request({"type": "ESTADO", "token": token(who)})["state"]
+        self.assertEqual(view("Ana")["status"], "EM_JOGO")
+        return server, view
+
+    def test_adversario_que_nao_volta_perde_por_abandono(self):
+        server, view = self.match()
+        revision = server.state["revision"]
+        limit = time.monotonic() + 0.4
+        while time.monotonic() < limit:  # Ana segue consultando; Bruno parou. Ainda dentro do prazo.
+            self.assertEqual(view("Ana")["winner"], None)
+            time.sleep(0.05)
+        self.assertEqual(server.state["revision"], revision)
+        state = wait_for(lambda: (s := view("Ana"))["status"] == "ENCERRADA" and s, seconds=3)
+        self.assertEqual((state["reason"], state["winner"]), ("ABANDONO", player_id(token("Ana"))))
+        self.assertEqual(server.state["revision"], revision + 1)  # Uma alteração só, como qualquer jogada.
+        self.assertEqual(view("Bruno")["winner"], player_id(token("Ana")))  # Bruno volta e vê que perdeu.
+        self.assertEqual(server.state["revision"], revision + 1)
+
+    def test_quem_tambem_esteve_fora_nao_vence_ao_voltar(self):
+        server, view = self.match()
+        long_ago = time.monotonic() - 100  # Os dois sumiram; Ana volta primeiro.
+        for who in ("Ana", "Bruno"):
+            server.seen[player_id(token(who))] = server.present[player_id(token(who))] = long_ago
+        self.assertEqual(view("Ana")["winner"], None)   # O prazo de Bruno começa quando Ana volta.
+        self.assertEqual(view("Bruno")["winner"], None)
+        time.sleep(0.2)
+        view("Bruno")
+        self.assertEqual(view("Ana")["status"], "EM_JOGO")
+
+    def test_troca_de_servidor_nao_da_vitoria_a_ninguem(self):
+        server, view = self.match()
+        time.sleep(0.8)  # Passou do prazo sem ninguém consultar: o nó esteve fora do ar para os dois.
+        server.forget_presence()  # É o que a promoção e a retomada fazem.
+        self.assertEqual(view("Ana")["winner"], None)
+        self.assertEqual(view("Bruno")["winner"], None)
 
     def test_estado_grande_demais_recusa_o_comando_sem_pausar(self):
         server = self.node("forca-a", 0, PRIMARY, state=new_state())

@@ -14,6 +14,7 @@ navegador ──HTTPS──> forca.ambrosias.dev (Oracle: Nginx + gateway)
 - O primeiro jogador espera; o segundo inicia a partida. O terceiro espera em outra sala, e assim por diante. Várias partidas acontecem ao mesmo tempo.
 - Cada jogador tem seu boneco e até seis erros. Na sua vez, tente uma letra ou chute a palavra inteira. Acertar ou errar passa a vez; um chute errado custa um membro.
 - Quem completa a palavra vence; quem atinge seis erros perde.
+- Se o adversário sair da partida e não voltar em 30 segundos, quem ficou vence por abandono.
 - Nomes são únicos entre os jogadores ativos, sem diferenciar maiúsculas. Acentos são ignorados: `ç` conta como `C`.
 - **Funciona com um nó só:** se apenas uma VM estiver ligada, ela cria o jogo e atende. Quando a outra entra, passa a guardar a segunda cópia.
 - **Replicação antes de confirmar:** com os dois nós ligados, o que atende envia o estado ao outro e espera o ACK antes de responder.
@@ -50,7 +51,7 @@ Para ensaiar em containers, sem Tailscale (precisa de Docker):
 cd deploy/local && docker compose up -d --build && python3 ensaio.py
 ```
 
-O `ensaio.py` joga pelo gateway e derruba os nós: processo que morre e é reiniciado pelo Docker, rede cortada (como desligar o PC) e retorno como reserva.
+O `ensaio.py` joga pelo gateway e derruba os nós: processo que morre e é reiniciado pelo Docker, rede cortada (como desligar o PC), nó seguindo sozinho, retorno como reserva e vitória por abandono. Leva cerca de um minuto.
 
 O cliente de terminal continua disponível para testes: `python cliente.py --name Ana --nova-sessao` (ele usa `127.0.0.1:5000,127.0.0.1:5002` por padrão).
 
@@ -62,6 +63,7 @@ O cliente de terminal continua disponível para testes: `python cliente.py --nam
 | Campo "Chutar a palavra inteira" | Tenta a palavra. Certo: vence. Errado: +1 erro e a vez passa |
 | Nova partida | Aparece quando a partida termina |
 | Sair | Desiste da partida (pede confirmação) e libera o nome |
+| Fechar a aba no meio da partida | A partida pausa; sem volta em 30 s, o adversário vence por abandono |
 | Recarregar a página | Mantém a sessão da aba e reenvia a jogada pendente, se houver |
 
 O canto superior mostra a conexão e o nó que está atendendo (`forca-a` ou `forca-b`), o que deixa a troca de servidor visível na apresentação. `GET /api/status` mostra o papel de cada nó.
@@ -88,6 +90,7 @@ Não é preciso descobrir IPs nem usar rede bridge: cada container `tailscale` d
 | `GATEWAY_HOST_PORT` | Oracle | Porta local em que o Nginx encontra o gateway | `8080` |
 | `GAME_PORT` / `SYNC_PORT` | Fora do Compose | Portas de jogo e de sincronização | `5000` / `5001` |
 | `BOOT_WAIT` / `SOLO_WAIT` | VM (opcional) | Segundos procurando o outro nó ao iniciar / de pausa ao perder o reserva | `10` / `7` |
+| `ABANDON_WAIT` | VM (opcional) | Segundos com o adversário fora até a vitória de quem ficou | `30` |
 
 As mesmas opções existem na linha de comando: `python servidor.py --help` e `python gateway.py --help`.
 
@@ -100,7 +103,8 @@ As mesmas opções existem na linha de comando: `python servidor.py --help` e `p
 - Se os dois nós pararem, as partidas se perdem: não há persistência em disco. Os navegadores voltam à tela de nome.
 - O gateway é um ponto único: se a Oracle cair, o jogo fica inacessível, embora os nós continuem com o estado.
 - A troca de servidor leva alguns segundos (até 5 s sem heartbeat quando o computador é desligado). Depois dela, a partida fica pausada até os dois jogadores voltarem a consultar.
-- Quem fecha a aba sem sair mantém a vaga; após 5 s sem consultas, a partida aparece pausada. Após 180 s longe de uma partida em andamento, o nome é liberado; se os dois participantes sumirem por 180 s, a partida é cancelada.
+- Quem fecha a aba no meio da partida tem 30 s para voltar; depois disso o adversário, se estiver presente, vence por abandono. Os 30 s só contam enquanto quem ficou está consultando o servidor, de modo que uma queda do gateway ou uma troca de servidor não dá vitória a ninguém. Se os dois sumirem por 180 s, a partida é cancelada. Fora de partida, o nome é liberado após 180 s sem consultas.
+- Chaves de replicação diferentes nos dois nós fazem cada um atender sozinho. Os dois registram no log `REPLICATION_KEY precisa ser igual nos dois nós`.
 
 ## Como ler o código
 
@@ -112,6 +116,7 @@ As mesmas opções existem na linha de comando: `python servidor.py --help` e `p
 | `forca/lobby.py` | Salas, nomes únicos, sessões, reenvios e coleta do estado |
 | `forca/game.py` | Regras de uma partida |
 | `forca/wire.py` | JSON por linha |
+| `forca/rede.py` | Vigia da rede: encerra o processo se a rede do container sumir, para o Docker reiniciá-lo |
 | `cliente.py`, `forca/ui.py` | Cliente de terminal, mantido para testes |
 | `compose.yaml` | Nó em uma VM: container `tailscale` + container `servidor` |
 | `deploy/oracle/` | Gateway na Oracle: Compose, `.env.example` e site do Nginx |
@@ -137,9 +142,9 @@ python -m unittest discover -s tests -v
 | Arquivo | Cobre |
 | --- | --- |
 | `tests/test_game.py` | Turnos, letras, chute, acentos, vitória, seis erros e lista de palavras |
-| `tests/test_lobby.py` | Salas, reagrupamento, nomes únicos, pausa, desistência, reenvio e coleta do estado |
-| `tests/test_cliente.py` | Enquadramento JSON, tela do terminal e comandos do `cliente.py` |
-| `tests/test_servidor.py` | Nós em processos reais: criação do jogo, replicação, queda, antigo primário que volta como reserva, primário pausado que volta a atender, sincronização inicial e decisões internas |
+| `tests/test_lobby.py` | Salas, reagrupamento, nomes únicos, pausa, desistência, abandono, reenvio e coleta do estado |
+| `tests/test_cliente.py` | Enquadramento JSON, tela do terminal, comandos do `cliente.py` e vigia da rede |
+| `tests/test_servidor.py` | Nós em processos reais: nó sozinho, replicação, queda, retorno como reserva, dois primários, chaves diferentes, sincronização inicial e vitória por abandono |
 | `tests/test_gateway.py` | Validação HTTP, roteamento pelo nó que atende e partida pelo gateway com queda do primário |
 
 Os testes usam portas livres escolhidas na hora e levam menos de um minuto. O teste físico de desligar o computador deve ser feito no ambiente de apresentação (seção 12 da especificação).

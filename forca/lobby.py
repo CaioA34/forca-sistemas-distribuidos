@@ -1,4 +1,5 @@
 """Salas e sessões. Não abre sockets: o servidor replica o resultado destas regras."""
+from dataclasses import asdict
 import hashlib
 import random
 import uuid
@@ -31,6 +32,15 @@ def public_state(state, pid, online):
     if room.status == "EM_JOGO" and not set(room.players) <= online:
         result["status"] = "PAUSADA"
     return result
+
+
+def walkover(state, room_id, winner):
+    """Vitória por abandono: o adversário ficou fora mais tempo que o servidor tolera (ver Server.abandoned)."""
+    room = Room(**state["world"]["rooms"][room_id])
+    room.finish(winner, "ABANDONO")
+    room.version += 1
+    state["world"]["rooms"][room_id] = asdict(room)
+    state["revision"] += 1
 
 
 def release(world, player, room):

@@ -2,7 +2,7 @@
 import unittest
 import uuid
 
-from forca.lobby import apply, new_state, player_id, public_state
+from forca.lobby import apply, new_state, player_id, public_state, walkover
 
 WORDS = ["SOCKET"]
 
@@ -242,6 +242,19 @@ class CollectionTests(unittest.TestCase):
         lobby.online.discard(player_id(token("Bruno")))
         result = lobby.send("Ana", "JOGAR", letter="A", version=lobby.view("Ana")["room_version"])
         self.assertEqual(result["code"], "PARTIDA_INDISPONIVEL")
+
+    def test_vitoria_por_abandono_encerra_a_sala_para_os_dois(self):
+        lobby = Lobby()
+        lobby.enter("Ana")
+        lobby.enter("Bruno")
+        version, revision = lobby.view("Ana")["room_version"], lobby.state["revision"]
+        walkover(lobby.state, "sala-1", player_id(token("Ana")))
+        view = lobby.view("Bruno")
+        self.assertEqual((view["status"], view["reason"], view["winner"]),
+                         ("ENCERRADA", "ABANDONO", player_id(token("Ana"))))
+        self.assertEqual((view["room_version"], lobby.state["revision"]), (version + 1, revision + 1))
+        self.assertEqual(view["masked_word"], "SOCKET")  # Palavra revelada, como em todo fim de partida.
+        self.assertTrue(lobby.enter("Ana")["ok"])  # Quem venceu parte para outra sala.
 
     def test_estado_para_1244_partidas_continua_pequeno(self):
         lobby = Lobby()

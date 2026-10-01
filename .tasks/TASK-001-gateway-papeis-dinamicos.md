@@ -247,3 +247,19 @@ Gateway na Oracle (https://forca.ambrosias.dev) e os dois nós em VMs de PCs dif
 
 Pendente: ensaio na rede da faculdade; rodar o roteiro da seção 13 com várias salas; merge na `main`.
 Cuidado ao validar pelo endereço público: jogadores de teste entram em salas reais.
+
+### Abandono, aviso de chave e vigia da rede (02/10/2026)
+
+- **Vitória por abandono (30 s):** `Server.abandoned` + `lobby.walkover`. Decidida na consulta de
+  quem ficou e replicada como uma jogada. O prazo conta do mais recente entre a última consulta do
+  ausente e o início da presença contínua de quem ficou; promoção e retomada zeram a presença.
+  `ABANDON_WAIT` configura. Página e terminal avisam o prazo na partida pausada.
+- **Chave diferente:** `Server.warn_key` registra o erro nos dois nós (no máximo 1 por minuto).
+- **Vigia da rede (`forca/rede.py`):** encerra servidor e gateway quando as interfaces somem; testado
+  no WSL reiniciando só o container de rede: recuperação em ~5 s, sem comando.
+- 85 testes OK (Windows e WSL); `deploy/local/ensaio.py` ganhou o passo 6 (abandono em 30,2 s,
+  replicado ao reserva).
+
+Em aberto por decisão do usuário: árbitro para dois primários, `/api/status` público, limite da
+porta 5001, script da Cloudflare bloqueado pela CSP. Sem decisão ainda: número de sequência para
+requisições atrasadas (item 4).

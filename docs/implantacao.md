@@ -113,16 +113,22 @@ máquina com `sudo docker compose exec tailscale tailscale ip -4` e troque `PEER
 
 ## Se o container tailscale reiniciar sozinho
 
-O servidor usa a rede do container `tailscale`. Se só esse container reiniciar por fora do Compose
-(`docker restart`, ou uma queda seguida do reinício automático), o servidor continua rodando preso
-à rede antiga: o nó aparece `FORA_DO_AR` no `/api/status` e o outro segue sozinho. Para recuperar:
+O servidor e o gateway usam a rede do container `tailscale`. Se só esse container reiniciar
+(`docker restart`, ou uma queda seguida do reinício automático), a rede antiga deixa de existir.
+O processo percebe isso em poucos segundos, registra `A rede deste processo deixou de existir` e se
+encerra; o Docker o reinicia já na rede nova. O nó volta em cerca de 5 a 10 s, como reserva de quem
+estiver atendendo, sem nenhum comando.
 
-```bash
-sudo docker compose restart servidor
+## Se os dois nós atenderem ao mesmo tempo sem se enxergar
+
+Confira a chave de replicação. Com chaves diferentes os nós não se sincronizam e cada um cria o
+próprio jogo. Os dois registram no log:
+
+```
+REPLICATION_KEY precisa ser igual nos dois nós; sem isso eles não se sincronizam.
 ```
 
-`docker compose restart tailscale` já reinicia o servidor junto, e reiniciar a VM inteira também
-não tem esse problema.
+Corrija o `.env` de um deles e rode `sudo docker compose up -d`.
 
 ## Ensaiar tudo em uma máquina só
 

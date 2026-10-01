@@ -1,7 +1,7 @@
 [project]
 name = "forca-distribuida"
-version = "0.2.0"
-description = "Jogo da forca distribuído: salas de dois jogadores, sockets TCP e servidores primário e reserva"
+version = "0.3.0"
+description = "Jogo da forca distribuído: salas de dois jogadores, página web, gateway HTTP e dois nós com papéis dinâmicos e estado replicado"
 requires-python = ">=3.12"
 dependencies = []
 

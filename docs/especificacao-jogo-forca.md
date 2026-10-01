@@ -2,7 +2,7 @@
 
 Python com sockets TCP em duas máquinas físicas com VMs e Docker, jogado pelo navegador
 
-Versão 3.0 | 30 de setembro de 2026 | Sistemas Distribuídos
+Versão 3.1 | 2 de outubro de 2026 | Sistemas Distribuídos
 
 ## 1 Objetivo e decisões do projeto
 
@@ -24,7 +24,7 @@ Desenvolver um jogo da forca cliente e servidor em Python. Os jogadores são org
 | Cliente | Página web com os dois bonecos visíveis; cliente de terminal mantido para testes |
 | Cenário de falha | Uma falha por vez, por parada do processo ou desligamento do computador |
 
-As regras de vitória, os tempos e a interface definidos aqui são decisões do projeto. Os critérios da seção 12 são metas de aceitação; o que já foi verificado está indicado no ROADMAP.
+As regras de vitória, os tempos e a interface definidos aqui são decisões do projeto. Os critérios da seção 12 são metas de aceitação; o que já foi verificado e o que falta estão no ROADMAP.
 
 ## 2 Escopo e garantias do sistema distribuído
 
@@ -32,7 +32,7 @@ As regras de vitória, os tempos e a interface definidos aqui são decisões do 
 
 Com os dois nós sincronizados, o sistema suporta a queda do nó que atende e continua no outro. A recuperação causa uma pausa visível de alguns segundos. O jogador não troca de endereço: o gateway passa a encaminhar para o nó que assumiu, e a página retoma a sessão.
 
-**Nenhuma jogada que o sistema tenha confirmado ao jogador enquanto os dois nós estavam sincronizados pode desaparecer.** O primário só responde depois que o reserva confirma ter recebido o novo estado. Uma requisição cuja resposta não chegou ao navegador pode ter sido aplicada; nesse caso a página reenvia o mesmo identificador de requisição e recebe o resultado já registrado, sem executar a jogada duas vezes.
+**Nenhuma jogada que o sistema tenha confirmado ao jogador enquanto os dois nós estavam sincronizados pode desaparecer.** Havendo reserva, o primário só responde depois que ele confirma ter recebido o novo estado. Uma requisição cuja resposta não chegou ao navegador pode ter sido aplicada; nesse caso a página reenvia o mesmo identificador de requisição e recebe o resultado já registrado, sem executar a jogada duas vezes.
 
 O jogo também funciona com um nó só: ele cria o jogo e atende com uma única cópia, e as jogadas desse período se perdem se ele cair antes de o outro voltar. Quando o outro nó entra, recebe a cópia completa e passa a ser reserva, sem reiniciar a partida.
 
@@ -82,11 +82,11 @@ O canal de sincronização transmite o estado completo após cada alteração, r
 
 **RF01 Identificação.** O jogador informa um nome de exibição de 1 a 24 caracteres imprimíveis. A página gera um token aleatório e o salva na aba (sessionStorage) antes da primeira requisição; o `cliente.py` o salva em arquivo. O nó usa o SHA-256 do token como player_id. A identidade é o token, não o nome.
 
-**RF01a Nomes únicos.** Dois jogadores ativos não podem ter o mesmo nome, estejam ou não na mesma sala. A comparação ignora maiúsculas e espaços nas pontas. Um ENTRAR com nome em uso é recusado com NOME_EM_USO. O nome fica reservado enquanto o jogador está ativo, inclusive desconectado, e é liberado quando ele envia SAIR. Para que um nome não fique preso por quem fechou a página e não voltou, o dono deixa de ser ativo quando passa 180 segundos sem consultar o servidor e não está em uma partida em andamento; sua sala de espera é cancelada e, se voltar, precisará entrar de novo. Durante os primeiros 180 segundos de um servidor, inclusive logo após a promoção do reserva, nenhum nome é liberado, dando tempo para todos reconectarem. No mesmo computador, o cliente trava o arquivo de sessão enquanto está aberto, de modo que um segundo cliente com o mesmo nome não reutiliza nem sobrescreve o token do primeiro.
+**RF01a Nomes únicos.** Dois jogadores ativos não podem ter o mesmo nome, estejam ou não na mesma sala. A comparação ignora maiúsculas e espaços nas pontas. Um ENTRAR com nome em uso é recusado com NOME_EM_USO. O nome fica reservado enquanto o jogador está ativo, inclusive desconectado, e é liberado quando ele envia SAIR. Para que um nome não fique preso por quem fechou a página e não voltou, o dono deixa de ser ativo quando passa 180 segundos sem consultar o servidor e não está em uma partida em andamento; sua sala de espera é cancelada e, se voltar, precisará entrar de novo. Durante os primeiros 180 segundos de um servidor, inclusive logo após a promoção do reserva, nenhum nome é liberado, dando tempo para todos reconectarem. No cliente de terminal, o arquivo de sessão fica travado enquanto o cliente está aberto, de modo que um segundo cliente com o mesmo nome no mesmo computador não reutiliza nem sobrescreve o token do primeiro.
 
 **RF02 Distribuição automática.** Ao receber ENTRAR, o servidor procura uma sala AGUARDANDO com um único jogador conectado. Se houver, ocupa a segunda vaga e inicia a partida. Caso contrário, cria uma nova sala. Um jogador ocupa apenas uma sala não encerrada; um novo ENTRAR durante uma partida devolve a mesma sala e avisa que ela está em andamento.
 
-**RF02a Reagrupamento.** Se um jogador que já espera sozinho enviar ENTRAR e houver outra sala com um jogador esperando e conectado, ele é levado a essa sala, a partida começa e a sala antiga é cancelada. O cliente envia esse ENTRAR automaticamente ao reconectar enquanto espera. Assim, dois jogadores que ficaram esperando em salas separadas, porque um deles estava desconectado quando o outro chegou, não ficam presos.
+**RF02a Reagrupamento.** Se um jogador que já espera sozinho enviar ENTRAR e houver outra sala com um jogador esperando e conectado, ele é levado a essa sala, a partida começa e a sala antiga é cancelada. A página envia esse ENTRAR automaticamente ao reconectar enquanto espera. Assim, dois jogadores que ficaram esperando em salas separadas, porque um deles estava desconectado quando o outro chegou, não ficam presos.
 
 **RF03 Lotação.** Uma sala com dois jogadores não recebe outro jogador.
 
@@ -104,7 +104,7 @@ O canal de sincronização transmite o estado completo após cada alteração, r
 
 **RF06 Salas independentes.** Cada sala possui sua palavra, suas letras, seus erros e seu turno.
 
-As salas assumem os estados AGUARDANDO, EM_JOGO, ENCERRADA e CANCELADA. PAUSADA é exibido quando a sala está EM_JOGO e algum participante não consultou o servidor nos últimos 5 segundos; jogadas ficam bloqueadas até a reconexão.
+As salas assumem os estados AGUARDANDO, EM_JOGO, ENCERRADA e CANCELADA. PAUSADA é exibido quando a sala está EM_JOGO e algum participante não consultou o servidor nos últimos 5 segundos; jogadas ficam bloqueadas até a reconexão ou até a vitória por abandono (RF09).
 
 ### 4.2 Encerramento e nova partida
 
@@ -144,7 +144,7 @@ Um jogador sozinho que envia SAIR cancela a sala. Em uma partida iniciada, SAIR 
 
 A trava é global, não por sala, e é mantida durante a replicação. Isso simplifica o raciocínio e é suficiente para a escala da demonstração, pois cada comando é curto e nenhum espera o jogador pensar. A versão da sala (room_version) enviada pelo cliente rejeita jogadas baseadas em um estado antigo.
 
-**RF08 Autoridade do servidor.** O servidor recusa a jogada fora da vez mesmo que um cliente modificado envie a mensagem. O prompt do cliente é apenas uma conveniência.
+**RF08 Autoridade do servidor.** O servidor recusa a jogada fora da vez mesmo que um cliente modificado envie a mensagem. O teclado habilitado na página é apenas uma conveniência.
 
 A trava protege as threads de um processo, não os dois nós. A existência de um único nó aceitando alterações decorre do protocolo de papéis descrito na seção 8.
 
@@ -167,7 +167,7 @@ Sockets, threads e presença dos jogadores não são replicados. Após a promoç
 
 ### 7.2 Sequência de uma alteração
 
-**RD01 Replicação antes da confirmação.** Uma operação que altera dados só é confirmada ao cliente depois que o reserva guardou o novo estado. Vale para ENTRAR, JOGAR, CHUTAR e SAIR, incluindo o sorteio da palavra e a reserva do nome.
+**RD01 Replicação antes da confirmação.** Havendo reserva, uma operação que altera dados só é confirmada ao jogador depois que o reserva guardou o novo estado. Vale para ENTRAR, JOGAR, CHUTAR, SAIR e a vitória por abandono, incluindo o sorteio da palavra e a reserva do nome. Um primário sozinho pula os passos 3 e 4.
 
 1. O primário cria uma cópia profunda do estado atual.
 2. Aplica o comando à cópia, registra o recibo e incrementa a revisão.
@@ -175,11 +175,11 @@ Sockets, threads e presença dos jogadores não são replicados. Após a promoç
 4. O reserva substitui sua cópia e responde com ACK contendo a revisão.
 5. O primário adota a cópia e responde ao jogador com o resultado e o estado.
 
-Se o ACK não chegar, o primário descarta a cópia, se pausa e responde retry; o cliente tenta outro endereço com o mesmo comando. Se o primário cair depois do passo 4, a alteração existe no reserva, e o reenvio do mesmo request_id devolve o resultado registrado.
+Se o ACK não chegar, o primário descarta a cópia, entra na espera de até 7 segundos (seção 8.3) e responde retry; o gateway tenta o outro nó com o mesmo comando. Se o primário cair depois do passo 4, a alteração existe no reserva, e o reenvio do mesmo request_id devolve o resultado registrado.
 
 ### 7.3 Idempotência
 
-**RD02 Uma requisição não produz dois efeitos.** Cada comando de alteração recebe um UUID gerado pelo cliente e salvo no arquivo de sessão antes do envio. Ao reenviar, o cliente preserva identificador e conteúdo. O servidor devolve o resultado já registrado; reutilizar o identificador do último comando com outro conteúdo é rejeitado.
+**RD02 Uma requisição não produz dois efeitos.** Cada comando de alteração recebe um UUID gerado pela página e salvo na aba antes do envio (no cliente de terminal, no arquivo de sessão). Ao reenviar, o cliente preserva identificador e conteúdo. O servidor devolve o resultado já registrado; reutilizar o identificador do último comando com outro conteúdo é rejeitado.
 
 Como o cliente tem um único comando pendente por vez, o servidor guarda apenas o recibo do último comando de cada jogador, e nenhum de quem nunca entrou. Isso mantém o estado replicado pequeno. Os recibos são replicados com o estado e apagados junto com o jogador. Trata-se de efeito único por identificador, não de entrega exatamente uma vez pela rede.
 
@@ -215,7 +215,7 @@ O compose.yaml usa restart unless-stopped: como um nó que volta procura o outro
 
 ### 8.4 Reconexão do jogador
 
-**RD05 Retomada automática.** O gateway consulta os dois nós a cada segundo e encaminha cada comando ao que atende com a maior época; em retry ou falha, tenta o outro. Sem nenhum nó atendendo, responde 503 e a página reenvia o mesmo comando, mantendo token e request_id. A próxima consulta devolve o estado completo e autoritativo da sala.
+**RD05 Retomada automática.** O gateway consulta os dois nós a cada segundo e encaminha cada comando ao que atende; se os dois atendem, ao de maior revisão e depois ao de maior época. Em retry ou falha, tenta o outro. Sem nenhum nó atendendo, responde 503 e a página reenvia o mesmo comando, mantendo token e request_id. A próxima consulta devolve o estado completo e autoritativo da sala.
 
 O deployment_id recebido na primeira resposta é salvo na sessão. Se os dois nós reiniciarem, a página recebe uma resposta fatal e volta à tela de nome, em vez de criar uma identidade nova sem perceber.
 
@@ -236,10 +236,10 @@ Cada comando de jogador usa uma conexão curta: conectar, enviar, receber a resp
 | Direção | Tipos | Finalidade |
 | --- | --- | --- |
 | Página para gateway | POST /api, GET /api/status | Enviar comandos; ver o papel de cada nó |
-| Gateway para nó | PING | Descobrir quem atende e a época |
+| Gateway para nó | PING | Descobrir quem atende, a época e a revisão |
 | Gateway para nó | ESTADO, ENTRAR, JOGAR, CHUTAR, SAIR | Presença, ocupar sala, tentar letra, chutar a palavra e desistir |
 | Nó para gateway | ok, retry, fatal | Resultado, nó indisponível ou execução diferente |
-| Nó que procura para o outro | key, node, role, serving | Autenticar e se apresentar |
+| Nó que procura para o outro | key, node, role, serving, epoch, revision | Autenticar e se apresentar |
 | Primário para reserva | state, heartbeat | Replicar e monitorar |
 | Reserva para primário | ack, heartbeat | Confirmar e responder |
 
@@ -251,7 +251,7 @@ Exemplo de comando JOGAR:
  "letter":"A","version":8}
 ```
 
-O exemplo está formatado para leitura; na rede ocupa uma linha. O autor da jogada é determinado pelo token, e não por um player_id enviado pela página. Os campos completos, o estado público e os códigos de erro estão em docs/protocolo-etapa-1.md.
+O exemplo está formatado para leitura; na rede ocupa uma linha. O autor da jogada é determinado pelo token, e não por um player_id enviado pela página. Os campos completos, o estado público e os códigos de erro estão em docs/protocolo.md.
 
 ### 9.3 Proteção mínima
 
@@ -265,6 +265,8 @@ Tokens são imprevisíveis, guardados apenas na aba do navegador e não aparecem
 
 Cada VM executa um projeto Compose com dois serviços: tailscale, que dá à VM o nome fixo do nó, e servidor, que usa a rede do container tailscale. As portas não são publicadas na rede local. A comunicação entre as VMs usa os nomes do Tailscale, não IPs.
 
+Se só o container tailscale reiniciar, uma vigia no servidor e no gateway percebe que a rede deixou de existir e encerra o processo; a política de reinício do Docker o traz de volta na rede nova.
+
 ### 10.2 Configuração
 
 | Variável | Finalidade |
@@ -275,14 +277,13 @@ Cada VM executa um projeto Compose com dois serviços: tailscale, que dá à VM 
 | TS_AUTHKEY | Chave de autenticação do Tailscale, com a tag tag:forca |
 | SERVIDORES | No gateway: forca-a:5000,forca-b:5000 |
 | GAME_PORT / SYNC_PORT | 5000 / 5001 (fora do Compose) |
+| BOOT_WAIT | Opcional: segundos procurando o outro nó ao iniciar (10) |
+| SOLO_WAIT | Opcional: segundos de espera ao perder o reserva (7) |
+| ABANDON_WAIT | Opcional: segundos até a vitória por abandono (30) |
 
 ### 10.3 VirtualBox e rede
 
 Uma VM Linux por computador, com 2 vCPUs, 2 GB de RAM e 15 GB de disco, é uma configuração inicial suficiente. Usar a mesma distribuição e versões nas duas VMs facilita a reprodução.
-
-As variáveis opcionais BOOT_WAIT e SOLO_WAIT mudam os 10 e os 7 segundos das seções 8.2 e 8.3, e ABANDON_WAIT muda os 30 segundos da vitória por abandono.
-
-O servidor e o gateway usam a rede do container tailscale. Se só esse container reiniciar, uma vigia no processo percebe que a rede deixou de existir e o encerra; a política de reinício do Docker o traz de volta na rede nova.
 
 A rede da VM pode ficar em NAT: o Tailscale atravessa NAT e firewalls, e usa servidores intermediários quando a conexão direta é bloqueada. Não é preciso IP fixo, modo bridge nem liberar portas na rede da faculdade.
 
@@ -294,7 +295,7 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 
 **RN01 Logs.** O nó registra horário, portas, criação do jogo, sincronização do reserva, cada revisão confirmada com o tipo de comando ou a vitória por abandono, perda do reserva, cessão do papel, promoção com a revisão e a época assumidas e chave de replicação recusada. O gateway registra quando cada nó passa a atender ou deixa de atender. Tokens e palavras secretas não são registrados.
 
-**RN02 Metas.** Na rede local, demonstrar pelo menos cinco clientes em três salas, confirmação de jogada perceptivelmente imediata e recuperação em até 15 segundos após desligar o primário. São metas a medir na apresentação; a integridade do estado tem prioridade sobre a velocidade.
+**RN02 Metas.** Demonstrar pelo menos cinco jogadores em três salas, confirmação de jogada perceptivelmente imediata e recuperação em até 15 segundos após desligar o primário. São metas a medir na apresentação; a integridade do estado tem prioridade sobre a velocidade.
 
 **RN03 Isolamento.** Uma mensagem inválida ou um cliente lento não derruba o nó nem o gateway: cada conexão com o nó tem timeout de 4 segundos, as mensagens têm tamanho limitado e o número de conexões simultâneas é limitado a 64 no nó e a 128 no gateway.
 
@@ -317,16 +318,16 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 | T11 | Desligar o computador do primário | Partidas e sala em espera retomadas no reserva |
 | T12 | Queda do primário após o ACK e antes da resposta | Reenvio resolve a ação sem duplicar erro ou turno |
 | T13 | Encerrar o reserva | Primário pausa por até 7 s e segue sozinho; o reserva que volta recebe as jogadas feitas sem ele |
-| T14 | Cliente fecha e reabre | Volta à mesma sala; adversário vê a partida pausada |
+| T14 | Jogador fecha a página e volta em menos de 30 s | Volta à mesma sala; adversário vê a partida pausada nesse intervalo |
 | T15 | Sessão de outra execução | Resposta fatal; a página volta à tela de nome |
 | T16 | Chute certo | Autor vence com PALAVRA_COMPLETA; palavra revelada aos dois |
 | T17 | Chute errado | Aviso de que não coincide; +1 erro ao autor; vez passa; chute listado |
 | T18 | Mesmo nome em outra sala ou outro computador | NOME_EM_USO; o primeiro jogador não é afetado |
-| T19 | Mesmo nome no mesmo computador | Segundo cliente recusado pela trava da sessão |
-| T20 | /estado e /ajuda | Estado sem lista de comandos; ajuda só com a lista; ambos respondem sem conexão |
+| T19 | Cliente de terminal: mesmo nome no mesmo computador | Segundo cliente recusado pela trava da sessão |
+| T20 | Cliente de terminal: /estado e /ajuda | Estado sem lista de comandos; ajuda só com a lista; ambos respondem sem conexão |
 | T21 | Dois jogadores esperando em salas separadas | Quem reconecta entra na sala do outro e a partida começa |
 | T22 | Nome de quem sumiu há três minutos | Liberado fora de partida; mantido durante uma partida |
-| T23 | Reserva que some na sincronização inicial | Primário não pausa e sincroniza com o próximo reserva |
+| T23 | Reserva que some na sincronização inicial | Primário segue como estava e sincroniza com o próximo reserva |
 | T24 | Chave com acento ou comando malformado | Resposta controlada, sem derrubar o servidor nem o canal de replicação |
 | T25 | Palavra com acento, espaço ou hífen na lista | Acento normalizado; espaço ou hífen impedem o servidor de iniciar |
 | T26 | Religar o antigo primário | Entra como reserva de quem atende; a partida continua |
@@ -341,11 +342,11 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 | T35 | Chaves de replicação diferentes | Cada nó atende sozinho e os dois registram o erro no log |
 | T36 | Container de rede reiniciado sozinho | O servidor se encerra, é reiniciado e volta a responder |
 
-A pasta tests contém testes automatizados com unittest para T01 a T10, T12 (reenvio após a troca de servidor), T13, T16 a T25 e T26 a T36 (em T20 e T21, a parte que depende do teclado e da reconexão do cliente foi verificada manualmente), com os nós e o gateway em processos reais e TCP local. A página foi verificada no navegador com dois jogadores e a sequência completa: queda de forca-a, retorno como reserva e queda de forca-b. Eles são executados com python -m unittest discover -s tests.
+A pasta tests contém testes automatizados com unittest para T01 a T10, T12 (reenvio após a troca de servidor), T13, T16 a T25 e T26 a T36 (em T20 e T21, a parte que depende do teclado e da reconexão do cliente foi verificada manualmente), com os nós e o gateway em processos reais e TCP local. Eles são executados com python -m unittest discover -s tests. O ensaio deploy/local/ensaio.py repete as falhas com os nós em containers. A página foi verificada no navegador com dois jogadores. T11 foi executado em 2 de outubro de 2026 com as VMs reais: o nó reserva assumiu cerca de 4 segundos depois do desligamento físico do computador, e o nó religado voltou como reserva com as jogadas feitas enquanto esteve fora.
 
 ### 12.2 Execução dos testes de falha
 
-Encerrar o processo testa a detecção por conexão fechada; desligar a VM ou o computador testa a detecção por timeout. T11 precisa incluir o desligamento físico solicitado pelo professor.
+Encerrar o processo testa a detecção por conexão fechada; desligar a VM ou o computador testa a detecção por timeout. T11 inclui o desligamento físico solicitado pelo professor.
 
 Para medir a preservação, registrar antes e depois a sala, a versão, as letras, os erros e o turno. Com papéis dinâmicos não é preciso reiniciar entre os testes: o nó religado volta como reserva.
 
@@ -359,7 +360,8 @@ Para medir a preservação, registrar antes e depois a sala, a versão, as letra
 6. Desligar fisicamente o computador do nó que atende, mantendo os jogadores ligados. Cronometrar a interrupção.
 7. Mostrar o aviso de reconexão, a promoção no log (época 2) e a retomada das salas 1 e 2 sem reiniciar as partidas; o canto da página passa a mostrar o outro nó.
 8. Abrir um sexto jogador e mostrar que ele entra na sala 3 com quem já aguardava.
-9. Religar o computador: o nó volta como reserva. Desligar agora o outro computador e mostrar que as partidas continuam, com as jogadas feitas enquanto o primeiro estava fora.
+9. Religar o computador e iniciar a VM: o nó volta como reserva. Desligar agora o outro computador e mostrar que as partidas continuam, com as jogadas feitas enquanto o primeiro estava fora.
+10. Fechar a página de um jogador no meio de uma partida: o adversário vê a partida pausada e, em 30 segundos, vence por abandono.
 
 Os jogadores devem usar equipamentos que fiquem ligados. Desligar o computador de um jogador derruba aquele jogador; isso não é resolvido pela redundância dos nós.
 
@@ -383,13 +385,13 @@ Os jogadores devem usar equipamentos que fiquem ligados. Desligar o computador d
 
 ### 14.2 Entrega final
 
-A entrega contém código Python, página web, testes automatizados, Dockerfile, Compose do nó e do gateway, configuração de exemplo, lista de palavras, README, guia de implantação, descrição do protocolo e esta especificação. Falta o relatório do teste de desligamento físico, acompanhado no ROADMAP.
+A entrega contém código Python, página web, testes automatizados, Dockerfile, Compose do nó e do gateway, configuração de exemplo, lista de palavras, README, guia de implantação, descrição do protocolo e esta especificação. O que ainda falta para a apresentação está no ROADMAP.
 
 O projeto será considerado concluído quando os testes funcionais e de recuperação passarem no modelo admitido, a execução for reproduzível com Docker e a demonstração comprovar continuidade das partidas após o desligamento físico.
 
 ## 15 Referências técnicas
 
-As referências sustentam os recursos de infraestrutura e biblioteca. As regras do jogo, mensagens, tempos e o protocolo primário e reserva são decisões deste projeto. Consulta em 26 de setembro de 2026.
+As referências sustentam os recursos de infraestrutura e biblioteca. As regras do jogo, mensagens, tempos e o protocolo de papéis são decisões deste projeto. Consulta em 2 de outubro de 2026.
 
 - Python socket: interface de baixo nível para sockets TCP. https://docs.python.org/3/library/socket.html
 - Python threading: threads, Lock e BoundedSemaphore. https://docs.python.org/3/library/threading.html

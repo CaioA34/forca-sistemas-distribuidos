@@ -15,7 +15,7 @@ navegador ──HTTPS──> forca.ambrosias.dev (Oracle: Nginx + gateway)
 - Cada jogador tem seu boneco e até seis erros. Na sua vez, tente uma letra ou chute a palavra inteira. Acertar ou errar passa a vez; um chute errado custa um membro.
 - Quem completa a palavra vence; quem atinge seis erros perde.
 - Se o adversário sair da partida e não voltar em 30 segundos, quem ficou vence por abandono.
-- Nomes são únicos entre os jogadores ativos, sem diferenciar maiúsculas. Acentos são ignorados: `ç` conta como `C`.
+- Nomes são únicos entre os jogadores ativos, sem diferenciar maiúsculas. Em letras e chutes, acentos são ignorados: `ç` conta como `C`.
 - **Funciona com um nó só:** se apenas uma VM estiver ligada, ela cria o jogo e atende. Quando a outra entra, passa a guardar a segunda cópia.
 - **Replicação antes de confirmar:** com os dois nós ligados, o que atende envia o estado ao outro e espera o ACK antes de responder.
 - **Papéis dinâmicos:** se o primário cai, o reserva assume. Quando o antigo primário volta, ele entra como reserva de quem está atendendo. Não há primário fixo.
@@ -24,7 +24,18 @@ navegador ──HTTPS──> forca.ambrosias.dev (Oracle: Nginx + gateway)
 - Reenvios da mesma jogada não a aplicam duas vezes, mesmo depois da troca de servidor.
 - O estado replicado só guarda quem está jogando: partidas encerradas e jogadores que saíram são apagados.
 
-## Requisitos
+## Requisitos do trabalho e onde estão
+
+| Requisito | Onde está no projeto | Como demonstrar |
+| --- | --- | --- |
+| Utilizar socket | TCP entre o gateway e os nós (porta 5000) e entre os dois nós (porta 5001); mensagens em `forca/wire.py` | `/api/status` mostra os dois nós em máquinas diferentes; o log mostra a sincronização |
+| Servidor resiliente | Cópia do estado antes de confirmar; `Server.follow` promove o reserva; `Server.join` traz de volta quem caiu | Desligar o PC do nó que atende; religar; desligar o outro |
+| Múltiplas requisições e espera | Uma thread por conexão; `lobby.enter` distribui os jogadores | Abrir cinco jogadores e observar três salas |
+| Máximo de dois jogadores | Só entram em salas com uma vaga; `Room.start` exige dois | Ana e Bruno ficam juntos; Caio e Dani, em outra sala |
+| Controle como semáforo | A trava serializa o processamento; `turn` autoriza o jogador; um semáforo limita as conexões | Enviar letra fora da vez e ver a rejeição |
+| Estados e dois bonecos | A resposta traz os erros dos dois; `web/app.js` desenha os dois | Ana erra: o boneco dela muda nas duas telas |
+
+## O que é preciso para rodar
 
 - Python 3.12 ou superior para rodar localmente. Nenhum pacote externo.
 - Para a apresentação: dois computadores, cada um com uma VM Ubuntu 22.04+ (VirtualBox), Docker e uma conta gratuita no Tailscale. O gateway roda em container na instância Oracle.
@@ -130,7 +141,8 @@ Leia primeiro `game.py`, depois `lobby.py` e por último `servidor.py`. Em `Serv
 
 - [docs/implantacao.md](docs/implantacao.md): Tailscale, VMs e Oracle, passo a passo, com comandos úteis e as situações mais comuns na configuração das VMs.
 - [docs/especificacao-jogo-forca.md](docs/especificacao-jogo-forca.md): requisitos, garantias, limites e roteiro da apresentação.
-- [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md): mensagens HTTP, de jogadores e de sincronização.
+- [docs/protocolo.md](docs/protocolo.md): mensagens HTTP, de jogadores e de sincronização.
+- [ROADMAP.md](ROADMAP.md): o que está pronto, o que falta para a apresentação e o que ficou em aberto por decisão.
 - [ARCHITECTURE.md](ARCHITECTURE.md): visão geral da arquitetura.
 
 ## Testes

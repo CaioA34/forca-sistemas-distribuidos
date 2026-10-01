@@ -1,8 +1,7 @@
 # Protocolo
 
 Descreve as mensagens trocadas pela versão atual (`servidor.py`, `gateway.py`,
-`web/app.js`, `cliente.py` e `forca/wire.py`). O nome do arquivo foi mantido por
-histórico; o conteúdo vale para a versão com papéis dinâmicos e gateway web.
+`web/app.js`, `cliente.py` e `forca/wire.py`).
 
 ```
 navegador --HTTP /api--> gateway --TCP 5000 (JSON por linha)--> nó que atende

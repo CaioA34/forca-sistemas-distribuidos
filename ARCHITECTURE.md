@@ -70,7 +70,7 @@ O servidor e o gateway usam a rede do container `tailscale`. Se só aquele conta
 4. Com dois jogadores, a partida começa com uma palavra sorteada no nó; o primeiro a entrar começa.
 5. Ao reconectar enquanto espera, a página envia `ENTRAR` de novo; se outra sala tiver alguém esperando, os dois se juntam.
 
-Depois disso, a página envia `ESTADO` a cada 1 s e `JOGAR`, `CHUTAR` ou `SAIR` quando o jogador age. Detalhes em [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md).
+Depois disso, a página envia `ESTADO` a cada 1 s e `JOGAR`, `CHUTAR` ou `SAIR` quando o jogador age. Detalhes em [docs/protocolo.md](docs/protocolo.md).
 
 ## Partidas e estado
 
@@ -81,7 +81,7 @@ Depois disso, a página envia `ESTADO` a cada 1 s e `JOGAR`, `CHUTAR` ou `SAIR` 
 | Recibos | Para cada jogador, só o último comando: `request_id`, impressão digital e resultado |
 | Controle | `deployment_id` da execução, `revision` global e `epoch` |
 
-Uma trava (`threading.Lock`) torna indivisível a sequência: copiar o estado → aplicar a regra → replicar e esperar ACK → adotar a cópia → responder. Uma requisição espera no máximo 2 s pela trava; depois disso recebe `retry`. Com os tempos do gateway (leitura de 10 s) e do navegador (20 s), uma requisição só é aplicada enquanto quem a enviou ainda espera a resposta, e uma cópia atrasada não pode ser aplicada depois do comando seguinte.
+Uma trava (`threading.Lock`) torna indivisível a sequência: copiar o estado → aplicar a regra → replicar e esperar ACK (havendo reserva) → adotar a cópia → responder. Uma requisição espera no máximo 2 s pela trava; depois disso recebe `retry`. Com os tempos do gateway (leitura de 10 s) e do navegador (20 s), uma requisição só é aplicada enquanto quem a enviou ainda espera a resposta, e uma cópia atrasada não pode ser aplicada depois do comando seguinte.
 
 **Coleta:** ao fim de cada alteração, o nó libera quem sumiu há 180 s fora de partida em andamento, apaga jogadores inativos que nenhuma sala mostra e salas encerradas que ninguém consulta. O estado replicado depende de quantos jogam agora, não do histórico. Se mesmo assim passar de 2 MB, o comando é recusado (`ESTADO_CHEIO`) sem pausar o nó.
 
@@ -89,8 +89,8 @@ A consulta de estado monta só a sala do jogador, não o mundo inteiro.
 
 ## Recuperação de falhas
 
-- **Replicação síncrona:** o primário envia o estado completo ao reserva e só responde depois do ACK com a mesma revisão.
-- **Sincronização inicial:** o reserva só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Se a cópia inicial falhar, o primário não se pausa.
+- **Replicação síncrona:** havendo reserva, o primário envia o estado completo a ele e só responde depois do ACK com a mesma revisão.
+- **Sincronização inicial:** o reserva só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Se a cópia inicial falhar, o primário segue como estava.
 - **Heartbeat:** a cada 0,5 s. O primário espera 3 s; o reserva espera 5 s. O primário se pausa antes de o reserva assumir e só volta a atender sozinho 7 s depois.
 - **Queda do primário:** o reserva detecta o fechamento da conexão (processo encerrado) ou o timeout (computador desligado) e assume com a última revisão.
 - **Queda do reserva:** o primário se pausa por até 7 s e depois segue sozinho. Quando o reserva volta, se junta a ele e recebe a cópia.

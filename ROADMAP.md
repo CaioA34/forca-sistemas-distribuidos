@@ -98,7 +98,8 @@ Legenda: `[x]` feito, `[ ]` pendente.
 - [x] Testes automatizados em `tests/` (regras, chute, salas, nomes únicos, cliente, reenvio e queda de processo), executados por `python -m unittest discover -s tests` ou `scripts/forca.ps1 testes`.
 - [x] Documentação alinhada ao código: README, ARCHITECTURE, especificação e protocolo.
 - [x] Página verificada no navegador com dois jogadores: queda de `forca-a`, retorno como reserva e queda de `forca-b`, sem perder jogadas.
-- [ ] Executar o roteiro da seção 13 da especificação com desligamento físico do computador do nó que atende.
+- [x] Desligamento físico do PC do nó que atende e retorno como reserva, com VMs reais, Tailscale e gateway na Oracle (troca em ~4 s).
+- [ ] Executar o roteiro completo da seção 13 da especificação, com várias salas, na rede da faculdade.
 - [ ] Medir e registrar o tempo de recuperação e o estado das salas antes e depois da queda.
 - [ ] Conferir os requisitos do professor, incluindo a interpretação de "nó".
 

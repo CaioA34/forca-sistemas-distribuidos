@@ -231,3 +231,19 @@ segunda cópia. Troca consistência sob partição por disponibilidade.
   retorno do reserva com a jogada feita sem ele.
 - Garantia que mudou: jogadas confirmadas com uma cópia só podem se perder; partição entre os nós
   com os dois recebendo jogadas descarta as do nó que cede. Documentado em README e ARCHITECTURE.
+
+### Implantação real validada (02/10/2026)
+
+Gateway na Oracle (https://forca.ambrosias.dev) e os dois nós em VMs de PCs diferentes, pelo Tailscale.
+
+- Nó `a` sozinho: criou o jogo e atendeu; partida completa pelo endereço público (consulta com
+  mediana de 150 ms).
+- Nó `b` subiu depois: entrou como RESERVA e passou a acompanhar a revisão do primário.
+- **Desligamento físico do PC do nó `a`** (00:39): gateway perdeu o nó às 00:39:47 e `forca-b`
+  atendia às 00:39:51 (época 3 → 4, revisão 20 preservada). Cerca de 4 s sem atendimento, com
+  precisão de ±1 s (o gateway consulta a cada 1 s).
+- **PC do nó `a` religado** (00:43): VM e containers subiram sozinhos; `forca-a` voltou como RESERVA
+  na revisão 22, com as jogadas feitas enquanto esteve fora.
+
+Pendente: ensaio na rede da faculdade; rodar o roteiro da seção 13 com várias salas; merge na `main`.
+Cuidado ao validar pelo endereço público: jogadores de teste entram em salas reais.

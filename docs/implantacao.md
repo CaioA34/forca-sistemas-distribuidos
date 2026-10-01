@@ -98,6 +98,146 @@ O gateway escuta só em `127.0.0.1:${GATEWAY_HOST_PORT}`. Para publicá-lo:
    padrão dos outros sites da instância, teste com `nginx -t` e recarregue.
 3. Abra https://forca.ambrosias.dev e https://forca.ambrosias.dev/api/status.
 
+## Comandos úteis na VM
+
+Todos na pasta do projeto, dentro da VM.
+
+| Para | Comando |
+| --- | --- |
+| Ver se os dois containers estão de pé | `sudo docker compose ps` |
+| Acompanhar o log do nó | `sudo docker compose logs -f servidor` |
+| Ver as últimas linhas do log do Tailscale | `sudo docker compose logs --tail 30 tailscale` |
+| Ver quem está na rede do Tailscale | `sudo docker compose exec tailscale tailscale status` |
+| Ver o endereço `100.x` desta VM | `sudo docker compose exec tailscale tailscale ip -4` |
+| Testar se o outro nó é alcançado pelo nome | `sudo docker compose exec tailscale tailscale ping forca-b` |
+| Conferir o `.env` sem mostrar as chaves | `grep -E '^NODE_NAME=' .env` e `grep -E '^PEER=' .env` |
+| Atualizar para a versão mais recente | `git pull && sudo docker compose up -d --build` |
+| Reiniciar o nó (ele volta como reserva do outro) | `sudo docker compose restart servidor` |
+| Parar o nó | `sudo docker compose down` |
+| Parar e apagar a identidade do Tailscale desta VM | `sudo docker compose down -v` |
+
+De qualquer computador, o estado dos dois nós visto pelo gateway:
+
+```bash
+curl -s https://forca.ambrosias.dev/api/status
+```
+
+Cada nó aparece com `role` (`ENTRANDO`, `RESERVA`, `PRIMARIO` ou `FORA_DO_AR`), `serving` (se está
+atendendo), `epoch` (quantas trocas de primário já houve) e `revision` (quantas alterações o jogo já
+teve). Com os dois nós sincronizados, `epoch` e `revision` são iguais nos dois.
+
+### O que o log do nó diz
+
+| Mensagem | Significado |
+| --- | --- |
+| `O outro nó não respondeu em 10 s: forca-a cria um jogo novo...` | Este nó subiu sozinho e está atendendo com uma cópia só |
+| `Nenhum jogo em andamento e forca-b também está entrando...` | Os dois subiram juntos; o de nome menor criou o jogo |
+| `Reserva forca-b sincronizado na revisão N. Agora há duas cópias.` | O outro nó entrou como reserva |
+| `Reserva de forca-a:5001 na revisão N.` | Este nó é o reserva |
+| `Ligação com o reserva perdida (...): primário pausado por até 7 s.` | O reserva sumiu; o primário espera antes de seguir sozinho |
+| `O outro nó não assumiu: forca-a segue atendendo sozinho...` | Passaram os 7 s; o jogo continua com uma cópia |
+| `PRIMÁRIO CAIU: forca-b assumiu na revisão N (época M).` | Este nó era reserva e passou a atender |
+| `Dois primários: prevalece ...` | Os nós se reencontraram atendendo; o de menos jogadas virou reserva |
+| `Estado N confirmado (vitória por abandono na sala-1).` | Um jogador ficou 30 s fora e o adversário venceu |
+| `REPLICATION_KEY precisa ser igual nos dois nós...` | As chaves de replicação são diferentes (ver abaixo) |
+| `A rede deste processo deixou de existir...` | O container `tailscale` reiniciou; o servidor se reinicia sozinho |
+
+## Situações comuns ao configurar as VMs
+
+**O script não fez nenhuma pergunta e o Compose reclamou de `NODE_NAME`.**
+Já existia um `.env` de uma versão anterior do projeto, e o script não sobrescreve um `.env`
+existente. Guarde o antigo e rode de novo:
+
+```bash
+mv .env .env.antigo && bash scripts/preparar-vm.sh
+```
+
+**Errei uma resposta do script (nó ou chave).**
+Apague o `.env` e rode o script de novo; ele volta a perguntar.
+
+```bash
+rm .env && bash scripts/preparar-vm.sh
+```
+
+**O container `tailscale` fica reiniciando e a VM não aparece em Machines.**
+Quase sempre é a chave. Confira no log:
+
+```bash
+sudo docker compose logs --tail 30 tailscale
+```
+
+Causas vistas na prática: a chave colada com o prefixo repetido (`tskey-auth-tskey-auth-...`), uma
+chave já revogada ou vencida, ou uma chave gerada sem a tag `tag:forca`. Corrija a linha
+`TS_AUTHKEY` do `.env` (ela deve começar com um único `tskey-auth-`) e recrie os containers:
+
+```bash
+sudo docker compose up -d --force-recreate
+```
+
+**A VM entrou no Tailscale como `forca-a-1` em vez de `forca-a`.**
+Já existia um dispositivo com esse nome, de uma instalação anterior. O outro nó e o gateway
+procuram por `forca-a` e não a encontram. Apague os dois dispositivos (`forca-a` e `forca-a-1`) em
+**Machines** no painel e recrie a identidade desta VM:
+
+```bash
+sudo docker compose down -v && sudo docker compose up -d
+```
+
+**O nó aparece `FORA_DO_AR` no `/api/status`.**
+O gateway não alcança a VM. Confira, nesta ordem: se a VM está ligada, se os dois containers estão de
+pé (`sudo docker compose ps`), e se a VM aparece conectada em `tailscale status`. Depois de religar o
+PC, lembre que é preciso iniciar a VM no VirtualBox; o Docker dentro dela sobe sozinho.
+
+**Os dois nós aparecem como `PRIMARIO` atendendo e não viram primário e reserva.**
+Eles não estão se sincronizando. Se o log mostrar `REPLICATION_KEY precisa ser igual nos dois nós`,
+as chaves de replicação são diferentes: corrija o `.env` de uma das VMs e rode
+`sudo docker compose up -d`. Se não houver esse aviso, o problema é de rede entre as VMs: teste com
+`sudo docker compose exec tailscale tailscale ping forca-b`.
+
+**O nó fica em `ENTRANDO` por alguns segundos ao subir.**
+É o esperado: ele procura o outro por até 10 s antes de decidir se vira reserva ou se cria o jogo.
+
+**A página mostra "Reconectando…" por alguns segundos.**
+Acontece durante a troca de servidor: até 5 s quando um PC é desligado, e até 7 s quando o reserva
+some e o primário espera antes de seguir sozinho. Se durar mais que isso, veja o `/api/status`.
+
+**As abas abertas voltaram para a tela de nome.**
+Os dois nós pararam ao mesmo tempo e o jogo recomeçou do zero (o estado fica só na memória). Para
+evitar, nunca deixe os dois fora do ar juntos: ao atualizar, faça uma VM de cada vez.
+
+**`permission denied` ao rodar `docker`.**
+Use `sudo`, ou coloque seu usuário no grupo `docker` e entre de novo na sessão:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+**O script falha com `$'\r': command not found`.**
+O projeto foi copiado de um Windows com fim de linha CRLF. Prefira `git clone` dentro da VM. Para
+corrigir a cópia atual:
+
+```bash
+sed -i 's/\r$//' scripts/preparar-vm.sh .env.example compose.yaml
+```
+
+**`/dev/net/tun não existe nesta VM`.**
+O Tailscale precisa desse dispositivo. Carregue o módulo e rode o script de novo:
+
+```bash
+sudo modprobe tun
+```
+
+**Quero recomeçar o jogo do zero.**
+Pare os dois nós e suba de novo. O primeiro que subir cria um jogo novo depois de 10 s.
+
+```bash
+sudo docker compose down
+```
+
+```bash
+sudo docker compose up -d
+```
+
 ## Se os nomes não resolverem dentro do container
 
 O `compose.yaml` liga `TS_ACCEPT_DNS` para que `forca-a` e `forca-b` resolvam dentro do container.

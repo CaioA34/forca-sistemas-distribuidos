@@ -108,3 +108,16 @@ Legenda: `[x]` feito, `[ ]` pendente.
 - [ ] Conferir os requisitos do professor, incluindo a interpretação de "nó".
 
 **Concluído quando:** a demonstração pode ser repetida seguindo o README, incluindo espera, novas salas e recuperação de falha.
+
+## 9. Em aberto por decisão
+
+Itens conhecidos que ficaram fora desta entrega:
+
+- Terceiro nó como árbitro, para cobrir a falha de rede entre os dois nós com ambos recebendo jogadas.
+- Número de sequência por sessão no lugar do identificador do último comando (requisição atrasada após o comando seguinte). Hoje o caso é coberto pela espera limitada pela trava.
+- `/api/status` é público e mostra papel e revisão dos nós.
+- A porta de sincronização aceita até 8 conexões não autenticadas ao mesmo tempo; só é alcançável pela rede do Tailscale.
+- O script de estatísticas da Cloudflare é bloqueado pela política de segurança da página (erro no console, sem efeito no jogo).
+- Testes automatizados que faltam: dois nós se juntando no mesmo instante e reenvio de `SAIR` já aplicado.
+- O PDF da especificação e os arquivos `docs/documentacao-completa-sockets.md` e `melhorias.md` descrevem a arquitetura anterior.
+

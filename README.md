@@ -128,7 +128,7 @@ Leia primeiro `game.py`, depois `lobby.py` e por último `servidor.py`. Em `Serv
 
 ## Documentação
 
-- [docs/implantacao.md](docs/implantacao.md): Tailscale, VMs e Oracle, passo a passo.
+- [docs/implantacao.md](docs/implantacao.md): Tailscale, VMs e Oracle, passo a passo, com comandos úteis e as situações mais comuns na configuração das VMs.
 - [docs/especificacao-jogo-forca.md](docs/especificacao-jogo-forca.md): requisitos, garantias, limites e roteiro da apresentação.
 - [docs/protocolo-etapa-1.md](docs/protocolo-etapa-1.md): mensagens HTTP, de jogadores e de sincronização.
 - [ARCHITECTURE.md](ARCHITECTURE.md): visão geral da arquitetura.

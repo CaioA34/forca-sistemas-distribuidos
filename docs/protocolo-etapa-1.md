@@ -33,7 +33,7 @@ JSON que o nó recebe na porta 5000. `cliente.py` fala direto com a porta 5000.
 - Corpo inválido: 400 (JSON inválido, não objeto, `type` fora da lista), 411
   (sem tamanho) ou 413 (grande demais).
 - Roteamento: o gateway envia `PING` a cada nó a cada 1 s e tenta primeiro o nó
-  que atende com a maior `epoch`. Em `retry` ou falha, tenta o próximo. Tempos:
+  que atende; entre dois atendendo, o de maior `revision` e depois o de maior `epoch`. Em `retry` ou falha, tenta o próximo. Tempos:
   1 s para conectar, 10 s para ler, e nenhuma tentativa começa depois de 6 s
   (pior caso de cerca de 17 s). Uma conexão HTTP que não envia a requisição em
   10 s é encerrada.
@@ -64,7 +64,7 @@ até 64 conexões simultâneas; as excedentes são fechadas.
 
 | `type` | Campos | Altera estado? | Efeito |
 | --- | --- | --- | --- |
-| `PING` | nenhum | não | Responde `{"ok": true, "node", "role", "serving", "epoch"}`. Não exige token nem a trava. |
+| `PING` | nenhum | não | Responde `{"ok": true, "node", "role", "serving", "epoch", "revision"}`. Não exige token nem a trava. |
 | `ESTADO` | `token`, `deployment` | não | Registra presença e devolve o estado da sala do jogador. |
 | `ENTRAR` | `token`, `deployment`, `request_id`, `name` | sim | Cria ou reativa o jogador, reservando o nome, e o coloca em uma sala. Quem já espera sozinho é levado à sala de outro jogador que esteja esperando conectado. |
 | `JOGAR` | `token`, `deployment`, `request_id`, `letter`, `version` | sim | Tenta uma letra. `version` é o `room_version` conhecido pelo cliente. |
@@ -109,8 +109,8 @@ Resposta normal (`ESTADO`, `ENTRAR`, `JOGAR`, `SAIR`):
 - `node` é o nome do nó que respondeu; `role` é sempre `PRIMARIO` numa resposta
   normal.
 - `{"retry": true, "message": ...}`: o nó não pode aceitar comandos agora (está
-  `ENTRANDO`, é `RESERVA`, é primário pausado sem reserva, ou a trava ficou
-  ocupada por mais de 2 s). O cliente trata como falha de conexão e tenta o
+  `ENTRANDO`, é `RESERVA`, é primário na espera de até 7 s depois de perder o
+  reserva, ou a trava ficou ocupada por mais de 2 s). O cliente trata como falha de conexão e tenta o
   próximo endereço, mantendo o comando pendente.
 - `{"fatal": true, "message": ...}`: o `deployment` enviado pertence a outra
   execução dos servidores (os dois nós reiniciaram). O navegador volta à tela
@@ -197,43 +197,51 @@ agora, não de quantas partidas já houve.
 ## Canal de sincronização (porta 5001)
 
 Não há papel fixo: os dois nós escutam 5001 e cada um conhece o outro por
-`PEER` (`host:porta`). Um nó sem estado (`ENTRANDO`), ou um primário pausado
-sem reserva, tenta se juntar ao outro a cada 1 s.
+`PEER` (`host:porta`). Todo nó sem reserva tenta falar com o outro a cada 1 s:
+quem está `ENTRANDO`, para se juntar; quem é primário sozinho, para descobrir
+se há outro primário.
 
-1. Quem procura → outro nó: `{"key", "node", "role", "serving"}`. Chave
-   incorreta: a conexão é fechada (comparação com `hmac.compare_digest` sobre
-   os bytes UTF-8, o que aceita chaves com acento).
+1. Quem procura → outro nó: `{"key", "node", "role", "serving", "epoch",
+   "revision"}`. Chave incorreta: a conexão é fechada (comparação com
+   `hmac.compare_digest` sobre os bytes UTF-8, o que aceita chaves com acento).
 2. O outro nó **aceita** se for `PRIMARIO` sem reserva e o visitante estiver
-   `ENTRANDO`, ou se ele próprio estiver atendendo (um primário pausado cede a
-   quem atende). Aceitar é enviar `{"state": {...}}` com o estado completo
-   (`world`, `receipts`, `revision`, `epoch`).
+   `ENTRANDO`, ou se o visitante também for `PRIMARIO` e tiver menos jogadas
+   confirmadas (regra abaixo). Aceitar é enviar `{"state": {...}, "node"}` com
+   o estado completo (`world`, `receipts`, `revision`, `epoch`).
 3. Visitante → nó: `{"ack": <revision>}`, enviado depois de guardar a cópia. O
-   visitante vira `RESERVA` e descarta o que tinha.
+   visitante vira `RESERVA` e descarta o que tinha. Um visitante primário
+   confere a regra de novo com o estado recebido antes de ceder.
 4. Logo após o ACK inicial e depois a cada 0,5 s, primário → reserva
    `{"heartbeat": true}`; o reserva responde `{"heartbeat": true}`.
 
-Se não aceitar, o nó responde `{"ok", "node", "role", "serving", "epoch"}` e
-fecha. Quando **os dois** estão `ENTRANDO` e se veem, o de nome menor cria um
-jogo novo (`deployment_id` novo, `epoch` 1) e fica primário pausado; o outro se
-junta a ele na tentativa seguinte. Um nó que inicia nunca cria um jogo sozinho.
+Se não aceitar, o nó responde com seu `PING` e fecha.
+
+**Início.** Um nó `ENTRANDO` procura o outro por 10 s (`BOOT_WAIT`). Se o outro
+aceita, vira reserva. Se os dois estão `ENTRANDO` e se veem, o de nome menor
+cria o jogo na hora. Se ninguém responde nesse tempo, o nó cria o jogo
+(`deployment_id` novo, `epoch` 1) e atende sozinho.
+
+**Entre dois primários**, prevalece o de maior `revision`; no empate, o de
+maior `epoch`; no empate, o de menor nome. O outro cede e vira reserva.
 
 O passo 2–3 se repete a cada comando que altera estado, antes da resposta ao
-jogador. O tráfego não é cifrado pela aplicação; na implantação ele passa pelo
-túnel do Tailscale.
+jogador, enquanto houver reserva. O tráfego não é cifrado pela aplicação; na
+implantação ele passa pelo túnel do Tailscale.
 
 Tempos: o primário espera 3 s por resposta do reserva; o reserva espera 5 s por
-mensagem do primário. Por isso o primário se pausa antes de o reserva assumir.
+mensagem do primário; o primário que perde o reserva espera 7 s (`SOLO_WAIT`)
+antes de atender sozinho.
 
 **Quando cada lado reage à perda da conexão:**
 
 - O reserva só pode se promover depois de receber a **segunda** mensagem do
   primário (um heartbeat ou um novo estado). Ela prova que o primário recebeu o
   ACK da cópia inicial e já o considera seu reserva. Se a conexão cair antes
-  disso, ele volta a `ENTRANDO` e tenta de novo.
+  disso, ele volta a `ENTRANDO`.
 - Ao se promover, o reserva soma 1 à `epoch` e passa a atender sozinho.
-- Se a cópia inicial ou o seu ACK falharem, o primário não se pausa: registra
-  "Sincronização inicial com o reserva falhou" e espera outra tentativa.
-- Depois da sincronização, se o primário não recebe um ACK ou heartbeat, ele se
-  pausa e volta a procurar o outro nó: se o outro se promoveu, este vira reserva
-  dele; se o outro reiniciou vazio, ele se junta a este e o jogo volta a ser
-  atendido.
+- Se a cópia inicial ou o seu ACK falharem, o primário segue como estava e
+  registra "Sincronização inicial com o reserva falhou".
+- Se o primário não recebe um ACK ou heartbeat, ele se pausa por 7 s. Nesse
+  intervalo, se o outro nó se promoveu, este cede e vira reserva dele; se o
+  outro reiniciou vazio, ele se junta a este. Passados os 7 s sem nenhum dos
+  dois, o primário volta a atender sozinho, com uma cópia só.

@@ -61,13 +61,14 @@ class Gateway:
             threading.Thread(target=self.probe, args=(address,), daemon=True).start()
 
     def order(self):
-        """Quem atende, com a maior época, primeiro; os outros em seguida, caso o PING esteja atrasado."""
+        """Quem atende primeiro; entre dois atendendo, o de mais jogadas confirmadas e depois a maior época
+        (a mesma regra pela qual os nós decidem quem cede). Os outros vêm em seguida, caso o PING atrase."""
         with self.lock:
             nodes = dict(self.nodes)
 
         def rank(address):
             status = nodes[address] or {}
-            return (not status.get("serving"), -(status.get("epoch") or 0))
+            return (not status.get("serving"), -(status.get("revision") or 0), -(status.get("epoch") or 0))
         return sorted(self.servers, key=rank)
 
     def forward(self, command):

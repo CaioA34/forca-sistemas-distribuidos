@@ -18,7 +18,7 @@ Desenvolver um jogo da forca cliente e servidor em Python. Os jogadores são org
 | Virtualização | VirtualBox; a rede da VM pode ficar em NAT |
 | Rede entre máquinas | Tailscale em container, com nomes fixos (forca-a, forca-b, forca-gateway) |
 | Empacotamento | Dockerfile único e Docker Compose para o nó e para o gateway |
-| Organização | Dois nós com papéis dinâmicos: quem atende é o primário, o outro é reserva sincronizado |
+| Organização | Dois nós com papéis dinâmicos: quem atende é o primário, o outro é reserva sincronizado; um nó sozinho também atende |
 | Estado | Em memória (RAM) nos dois nós; replicação síncrona feita pela aplicação |
 | Concorrência | threading.Lock no nó e versão por sala |
 | Cliente | Página web com os dois bonecos visíveis; cliente de terminal mantido para testes |
@@ -34,17 +34,17 @@ Com os dois nós sincronizados, o sistema suporta a queda do nó que atende e co
 
 **Nenhuma jogada que o sistema tenha confirmado ao jogador enquanto os dois nós estavam sincronizados pode desaparecer.** O primário só responde depois que o reserva confirma ter recebido o novo estado. Uma requisição cuja resposta não chegou ao navegador pode ter sido aplicada; nesse caso a página reenvia o mesmo identificador de requisição e recebe o resultado já registrado, sem executar a jogada duas vezes.
 
-Após a promoção, o nó que assumiu opera com uma única cópia. Quando o outro nó volta, ele entra como reserva e a redundância é restabelecida sem reiniciar a partida.
+O jogo também funciona com um nó só: ele cria o jogo e atende com uma única cópia, e as jogadas desse período se perdem se ele cair antes de o outro voltar. Quando o outro nó entra, recebe a cópia completa e passa a ser reserva, sem reiniciar a partida.
 
 ### 2.2 Limites com apenas dois nós
 
 O modelo pressupõe falha por parada: o nó indisponível realmente deixa de executar. O timeout do heartbeat é um indício de falha, não uma prova de que o outro computador desligou.
 
-A proteção é assimétrica. Se o primário perder o contato com o reserva, ele se pausa e recusa novas alterações, pois não consegue obter a segunda cópia. Se o reserva perder o contato com o primário, ele se promove. Assim, em uma interrupção de rede entre os dois nós, apenas o reserva continua aceitando jogadas, e o primário não confirma alterações divergentes. A queda do reserva pausa o jogo até ele voltar; como o container reinicia sozinho e o nó que volta se junta ao primário pausado, a pausa dura o tempo do reinício.
+O projeto prioriza a disponibilidade: um nó sozinho atende. Se o reserva perder o contato com o primário, ele se promove após 5 segundos. Se o primário perder o contato com o reserva, ele se pausa por 7 segundos e depois segue sozinho. A diferença entre os dois tempos cobre o caso de ter falhado só a rede entre os nós: quando o primário voltaria a atender, o reserva já assumiu, e o gateway encaminha os jogadores a ele.
 
-Ao voltar, um nó nunca se declara primário: ele procura o outro e vira reserva de quem estiver atendendo. Um primário pausado que encontra o outro atendendo descarta a própria cópia e vira reserva dele.
+Ao voltar, um nó procura o outro e vira reserva de quem estiver atendendo. Se dois primários se reencontram, fica o que confirmou mais jogadas; no empate, a maior época e depois o menor nome. O outro descarta a própria cópia e vira reserva.
 
-Uma falha dupla não é coberta: se o nó promovido aceitar jogadas e depois reiniciar vazio enquanto o antigo primário está pausado, o antigo volta a atender com a cópia dele e as jogadas do promovido se perdem. Garantias fortes exigiriam um terceiro participante de decisão (árbitro) que impeça dois nós de se considerarem ativos. Esse recurso fica fora do escopo deste trabalho.
+Não são cobertos: jogadas confirmadas com uma cópia só quando esse nó cai antes de o outro voltar; e uma falha de rede entre os nós em que os dois recebam jogadas, caso em que as do nó que cede são descartadas. Garantias fortes exigiriam um terceiro participante de decisão (árbitro). Esse recurso fica fora do escopo deste trabalho.
 
 ### 2.3 Condições da apresentação
 
@@ -187,27 +187,29 @@ Como o cliente tem um único comando pendente por vez, o servidor guarda apenas 
 
 | Papel | Comportamento |
 | --- | --- |
-| ENTRANDO | Sem estado. Procura o outro nó a cada segundo; responde retry aos jogadores |
+| ENTRANDO | Sem estado. Procura o outro nó a cada segundo, por até 10 segundos; responde retry aos jogadores |
 | RESERVA | Recebeu a cópia completa; guarda cada novo estado e responde heartbeats; responde retry aos jogadores |
-| PRIMARIO pausado | Tem o estado mas não tem reserva: início do jogo ou reserva perdido. Responde retry e procura o outro nó |
-| PRIMARIO com reserva | Atende jogadores e replica cada alteração |
-| PRIMARIO sozinho | Era reserva e o primário caiu. Atende sozinho a partir da última revisão recebida |
+| PRIMARIO com reserva | Atende jogadores e replica cada alteração antes de responder |
+| PRIMARIO sozinho | Atende com uma cópia só: criou o jogo sem achar o outro nó, assumiu após a queda do primário ou perdeu o reserva |
+| PRIMARIO em espera | Acabou de perder o reserva. Responde retry por até 7 segundos e procura o outro nó |
 
-Os dois nós escutam as portas 5000 e 5001 o tempo todo. O PING informa nome, papel, se atende e a época.
+Os dois nós escutam as portas 5000 e 5001 o tempo todo. O PING informa nome, papel, se atende, a época e a revisão.
 
 ### 8.2 Inicialização
 
-Um nó que inicia fica ENTRANDO e tenta se juntar ao outro (variável PEER), apresentando a chave de replicação. Um jogo novo só é criado quando os dois nós estão ENTRANDO e se veem: o de nome menor cria o estado, com um deployment_id novo e época 1, e fica primário pausado; o outro se junta a ele na tentativa seguinte e recebe a cópia completa. Só depois do ACK dessa cópia o primário registra no log Reserva sincronizado, envia logo o primeiro heartbeat e passa a aceitar jogadas. Se a cópia inicial ou o ACK falharem, o primário não se pausa: registra a falha e espera outra tentativa. A chave é comparada em bytes UTF-8, de modo que chaves com acento funcionam e uma chave inválida não derruba o canal.
+Um nó que inicia fica ENTRANDO e tenta se juntar ao outro (variável PEER), apresentando a chave de replicação. Se o outro já atende, recebe a cópia completa e vira reserva. Se os dois estão ENTRANDO e se veem, o de nome menor cria o jogo, com um deployment_id novo e época 1. Se ninguém responde em 10 segundos, o nó cria o jogo e atende sozinho. Quando um reserva se junta, o primário registra no log Reserva sincronizado e passa a replicar cada jogada. Se a cópia inicial ou o ACK falharem, o primário segue como estava e espera outra tentativa. A chave é comparada em bytes UTF-8, de modo que chaves com acento funcionam e uma chave inválida não derruba o canal.
 
-O compose.yaml usa restart unless-stopped: como um nó que volta nunca assume sozinho, reiniciar o container é seguro.
+O compose.yaml usa restart unless-stopped: como um nó que volta procura o outro antes de qualquer coisa, reiniciar o container é seguro.
 
 ### 8.3 Detecção e promoção
 
-**RD03 Heartbeat.** O primário envia um heartbeat ao reserva a cada 0,5 segundo e espera a resposta por até 3 segundos. O reserva espera mensagens do primário por até 5 segundos. Por isso o primário se pausa antes de o reserva assumir.
+**RD03 Heartbeat.** O primário envia um heartbeat ao reserva a cada 0,5 segundo e espera a resposta por até 3 segundos. O reserva espera mensagens do primário por até 5 segundos.
 
 **RD04 Assunção.** O reserva só pode se promover depois de receber a segunda mensagem do primário, um heartbeat ou um novo estado, que prova que o primário recebeu o ACK da cópia inicial. A partir daí, qualquer erro ou timeout no canal faz o reserva se promover: soma 1 à época e passa a atender. Se a conexão cair antes da segunda mensagem, ele volta a ENTRANDO. Ao encerrar o processo do primário, a conexão é fechada e a promoção é imediata; ao desligar o computador, ocorre após o timeout de 5 segundos.
 
-Se o primário detectar a perda do reserva, ele se pausa em vez de continuar com uma cópia, como descrito na seção 2.2, e volta a procurar o outro nó.
+**RD04a Perda do reserva.** O primário que perde o reserva se pausa por 7 segundos, mais que o tempo de promoção do reserva, e procura o outro nó. Se o outro se promoveu, o primário cede e vira reserva dele. Se o outro reiniciou, ele se junta ao primário. Se nada disso acontece, o primário volta a atender sozinho.
+
+**RD04b Dois primários.** Todo primário sem reserva continua procurando o outro nó. Se dois primários se encontram, prevalece o de maior revisão; no empate, o de maior época; no empate, o de menor nome. O outro descarta a própria cópia e vira reserva. O gateway usa a mesma ordem para escolher a quem encaminhar.
 
 ### 8.4 Reconexão do jogador
 
@@ -217,7 +219,7 @@ O deployment_id recebido na primeira resposta é salvo na sessão. Se os dois n�
 
 ### 8.5 Retorno de um nó
 
-**RD06 Retorno como reserva.** O nó que volta fica ENTRANDO, se junta a quem está atendendo e recebe a cópia completa; a redundância volta sem reiniciar as partidas. Um primário pausado que encontra o outro atendendo descarta a própria cópia e vira reserva dele. Um reserva que reinicia vazio e encontra o primário pausado se junta a ele, e o jogo volta a ser atendido.
+**RD06 Retorno como reserva.** O nó que volta fica ENTRANDO, se junta a quem está atendendo e recebe a cópia completa, incluindo as jogadas feitas enquanto esteve fora; a redundância volta sem reiniciar as partidas.
 
 ## 9 Protocolo de comunicação
 
@@ -276,6 +278,8 @@ Cada VM executa um projeto Compose com dois serviços: tailscale, que dá à VM 
 
 Uma VM Linux por computador, com 2 vCPUs, 2 GB de RAM e 15 GB de disco, é uma configuração inicial suficiente. Usar a mesma distribuição e versões nas duas VMs facilita a reprodução.
 
+As variáveis opcionais BOOT_WAIT e SOLO_WAIT mudam os 10 e os 7 segundos das seções 8.2 e 8.3.
+
 A rede da VM pode ficar em NAT: o Tailscale atravessa NAT e firewalls, e usa servidores intermediários quando a conexão direta é bloqueada. Não é preciso IP fixo, modo bridge nem liberar portas na rede da faculdade.
 
 ### 10.4 Operação
@@ -305,10 +309,10 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 | T07 | Vitória, seis erros e desistência | Resultado consistente nos dois clientes |
 | T08 | Reenvio do mesmo request_id | Mesmo resultado, sem nova jogada |
 | T09 | JSON inválido ou mensagem grande | Erro controlado sem queda do servidor |
-| T10 | Nó sozinho ou primário sem reserva | Jogadas recusadas até a sincronização |
+| T10 | Nó sozinho | Procura o outro por 10 s, cria o jogo e atende; o outro entra depois como reserva |
 | T11 | Desligar o computador do primário | Partidas e sala em espera retomadas no reserva |
 | T12 | Queda do primário após o ACK e antes da resposta | Reenvio resolve a ação sem duplicar erro ou turno |
-| T13 | Encerrar o reserva | Primário pausa e não confirma novas jogadas; volta a atender quando o reserva reinicia |
+| T13 | Encerrar o reserva | Primário pausa por até 7 s e segue sozinho; o reserva que volta recebe as jogadas feitas sem ele |
 | T14 | Cliente fecha e reabre | Volta à mesma sala; adversário vê a partida pausada |
 | T15 | Sessão de outra execução | Resposta fatal; a página volta à tela de nome |
 | T16 | Chute certo | Autor vence com PALAVRA_COMPLETA; palavra revelada aos dois |
@@ -324,7 +328,7 @@ Em cada VM, bash scripts/preparar-vm.sh instala o Docker, cria o .env e sobe os 
 | T26 | Religar o antigo primário | Entra como reserva de quem atende; a partida continua |
 | T27 | Derrubar o nó promovido depois do T26 | O antigo primário assume com todas as jogadas, inclusive as feitas enquanto esteve fora |
 | T28 | Dois nós iniciando juntos | Só o de nome menor cria o jogo; o outro vira reserva |
-| T29 | Primário pausado e o outro atendendo | O pausado descarta a cópia e vira reserva |
+| T29 | Dois primários se reencontram | Fica o de mais jogadas confirmadas (depois época, depois nome); o outro vira reserva |
 | T30 | Partida pelo gateway com queda do nó que atende | Mesmo endereço, estado idêntico, reenvio sem efeito duplo |
 | T31 | Muitas partidas encerradas | Estado replicado não cresce; comando que passaria de 2 MB é recusado sem pausar |
 | T32 | Corpo HTTP inválido ou caminho fora da lista | 400, 404 ou 413, sem derrubar o gateway |

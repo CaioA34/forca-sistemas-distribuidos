@@ -216,3 +216,18 @@ rede antiga (documentado em `docs/implantacao.md`).
 Falta: `scripts/preparar-vm.sh` (precisa de sudo), VMs reais em dois PCs, Oracle/Nginx/Cloudflare
 e o teste de desligamento físico. Os dispositivos de teste devem ser apagados do painel do Tailscale
 antes de subir as VMs reais.
+
+### Nó sozinho passa a atender (01/10/2026, a pedido)
+
+Decisão do usuário: com uma VM só o jogo deve funcionar; quando a outra entra, passa a guardar a
+segunda cópia. Troca consistência sob partição por disponibilidade.
+
+- `ENTRANDO` procura o outro nó por `BOOT_WAIT` (10 s) e então cria o jogo e atende sozinho.
+- Primário que perde o reserva pausa `SOLO_WAIT` (7 s, maior que os 5 s da promoção) e segue sozinho.
+- Todo primário sem reserva continua procurando o outro; dois primários se reconciliam por
+  `revision`, depois `epoch`, depois menor nome. O gateway ordena pela mesma regra.
+- `PING` e o `hello` de sincronização levam `revision`.
+- 75 testes OK (Windows e WSL); `deploy/local/ensaio.py` cobre pausa de 7 s, atendimento sozinho e
+  retorno do reserva com a jogada feita sem ele.
+- Garantia que mudou: jogadas confirmadas com uma cópia só podem se perder; partição entre os nós
+  com os dois recebendo jogadas descarta as do nó que cede. Documentado em README e ARCHITECTURE.

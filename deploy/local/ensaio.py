@@ -97,7 +97,8 @@ def serving(node, epoch):
 
 
 def main():
-    wait(serving("forca-a", 1), "forca-a atendendo, forca-b reserva")
+    wait(serving("forca-a", 1), "forca-a atendendo")
+    wait(lambda: status().get("forca-b") == ("RESERVA", False, 1), "forca-b guardando a segunda cópia")
     ana, bruno = Player("Ana"), Player("Bruno")
     ana.send("ENTRAR")
     bruno.send("ENTRAR")
@@ -121,18 +122,27 @@ def main():
     print("jogada 3 atendida por", play(players, "O"))
     before = snapshot(ana, bruno)
 
-    print("\n3) Rede volta: o antigo primário, pausado e ainda com a cópia velha, cede e vira reserva")
+    print("\n3) Rede volta: o antigo primário, que seguiu sozinho com a cópia velha, cede e vira reserva")
     docker("network", "connect", "--alias", "forca-b", NETWORK, "local-forca-b-1")
     wait(lambda: status().get("forca-b") == ("RESERVA", False, 3), "forca-b virou RESERVA do forca-a")
     assert status()["forca-a"] == ("PRIMARIO", True, 3), status()
     assert snapshot(ana, bruno) == before
 
-    print("\n4) Reserva cai e volta: primário pausa e retoma sozinho")
-    crash("local-forca-b-1")
-    wait(lambda: status().get("forca-b") == ("RESERVA", False, 3) and status()["forca-a"][1],
-         "reserva reiniciado se juntou; forca-a atendendo")
+    print("\n4) Reserva fica fora: o primário pausa alguns segundos e segue sozinho")
+    docker("stop", "local-forca-b-1")
+    wait(lambda: status().get("forca-a") == ("PRIMARIO", False, 3), "forca-a pausado, esperando o outro assumir")
+    wait(serving("forca-a", 3), "forca-a segue sozinho")
     wait(lambda: snapshot(ana, bruno) == before, "partida idêntica")
-    print("jogada 4 atendida por", play(players, "I"))
+    print("jogada 4 atendida por", play(players, "I"), "(uma cópia só)")
+    before = snapshot(ana, bruno)
+
+    print("\n5) Reserva volta e recebe a jogada feita sem ele; depois o primário cai")
+    docker("start", "local-forca-b-1")
+    wait(lambda: status().get("forca-b") == ("RESERVA", False, 3), "forca-b voltou como RESERVA")
+    docker("stop", "local-forca-a-1")
+    wait(serving("forca-b", 4), "forca-b assumiu (época 4)")
+    wait(lambda: snapshot(ana, bruno) == before, "partida idêntica, com a jogada feita com uma cópia só")
+    docker("start", "local-forca-a-1")
     print("\nENSAIO OK:", snapshot(ana, bruno))
 
 

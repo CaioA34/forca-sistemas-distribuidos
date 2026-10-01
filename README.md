@@ -15,7 +15,8 @@ navegador ──HTTPS──> forca.ambrosias.dev (Oracle: Nginx + gateway)
 - Cada jogador tem seu boneco e até seis erros. Na sua vez, tente uma letra ou chute a palavra inteira. Acertar ou errar passa a vez; um chute errado custa um membro.
 - Quem completa a palavra vence; quem atinge seis erros perde.
 - Nomes são únicos entre os jogadores ativos, sem diferenciar maiúsculas. Acentos são ignorados: `ç` conta como `C`.
-- **Replicação antes de confirmar:** o nó que atende envia o estado ao outro e espera o ACK antes de responder.
+- **Funciona com um nó só:** se apenas uma VM estiver ligada, ela cria o jogo e atende. Quando a outra entra, passa a guardar a segunda cópia.
+- **Replicação antes de confirmar:** com os dois nós ligados, o que atende envia o estado ao outro e espera o ACK antes de responder.
 - **Papéis dinâmicos:** se o primário cai, o reserva assume. Quando o antigo primário volta, ele entra como reserva de quem está atendendo. Não há primário fixo.
 - **Um endereço só:** o navegador fala sempre com o gateway, que descobre sozinho qual nó está atendendo. O jogador não digita IP nenhum.
 - **Sem configurar IP:** os nós e o gateway se encontram por nomes fixos do Tailscale (`forca-a`, `forca-b`), em qualquer rede.
@@ -86,13 +87,16 @@ Não é preciso descobrir IPs nem usar rede bridge: cada container `tailscale` d
 | `SERVIDORES` | Oracle | Endereços de jogo dos nós | `forca-a:5000,forca-b:5000` |
 | `GATEWAY_HOST_PORT` | Oracle | Porta local em que o Nginx encontra o gateway | `8080` |
 | `GAME_PORT` / `SYNC_PORT` | Fora do Compose | Portas de jogo e de sincronização | `5000` / `5001` |
+| `BOOT_WAIT` / `SOLO_WAIT` | VM (opcional) | Segundos procurando o outro nó ao iniciar / de pausa ao perder o reserva | `10` / `7` |
 
 As mesmas opções existem na linha de comando: `python servidor.py --help` e `python gateway.py --help`.
 
 ## Limites desta versão
 
-- Tolera **uma falha por vez**, por parada. Com o nó reserva fora, o primário se pausa até o reserva voltar (ele volta sozinho, com `restart: unless-stopped`).
-- Falha dupla perde jogadas: se o nó promovido aceitar jogadas e depois reiniciar vazio enquanto o antigo primário está pausado, o antigo volta a atender com a cópia dele. Evitar isso exige um terceiro nó como árbitro.
+- Tolera **uma falha por vez**, por parada. Com os dois nós ligados, nenhuma jogada confirmada se perde na queda de um deles.
+- Com um nó só, o jogo continua, mas com **uma cópia**: se esse nó cair antes de o outro voltar, as jogadas feitas nesse período se perdem.
+- Ao perder o reserva, o primário pausa por até 7 s antes de seguir sozinho. A pausa existe para o caso de ter sido só a rede entre os nós: nesse tempo o reserva assume e os jogadores vão para ele.
+- Se a rede entre os dois nós falhar com as duas máquinas vivas e os dois receberem jogadas, ao se reencontrarem fica o que confirmou mais jogadas e as do outro são descartadas. Evitar isso exige um terceiro nó como árbitro.
 - Se os dois nós pararem, as partidas se perdem: não há persistência em disco. Os navegadores voltam à tela de nome.
 - O gateway é um ponto único: se a Oracle cair, o jogo fica inacessível, embora os nós continuem com o estado.
 - A troca de servidor leva alguns segundos (até 5 s sem heartbeat quando o computador é desligado). Depois dela, a partida fica pausada até os dois jogadores voltarem a consultar.

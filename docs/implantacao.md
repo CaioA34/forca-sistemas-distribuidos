@@ -77,9 +77,9 @@ Devem aparecer `forca-a`, `forca-b` e, depois do passo 3, `forca-gateway`.
 sudo docker compose logs -f servidor
 ```
 
-No nó de nome menor aparece `Nenhum jogo em andamento: forca-a cria um novo...` e, assim que o
-outro sobe, `Reserva forca-b sincronizado... Jogadas liberadas.` Um nó sozinho fica em
-`ENTRANDO` e não aceita jogadas: sem o outro não há onde guardar a segunda cópia.
+Um nó sozinho procura o outro por 10 s, registra `O outro nó não respondeu em 10 s: ... cria um jogo
+novo` e passa a atender com uma cópia só. Assim que o outro sobe, aparece
+`Reserva forca-b sincronizado... Agora há duas cópias.`
 
 ## 3. Oracle: gateway
 
@@ -115,7 +115,7 @@ máquina com `sudo docker compose exec tailscale tailscale ip -4` e troque `PEER
 
 O servidor usa a rede do container `tailscale`. Se só esse container reiniciar por fora do Compose
 (`docker restart`, ou uma queda seguida do reinício automático), o servidor continua rodando preso
-à rede antiga: o nó aparece `FORA_DO_AR` no `/api/status` e o outro nó se pausa. Para recuperar:
+à rede antiga: o nó aparece `FORA_DO_AR` no `/api/status` e o outro segue sozinho. Para recuperar:
 
 ```bash
 sudo docker compose restart servidor

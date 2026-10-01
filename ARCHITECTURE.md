@@ -44,18 +44,20 @@ Um único nó aceita alterações por vez. Os dois escutam as duas portas; quem 
 
 | Papel | Atende? | Como chega a ele |
 | --- | --- | --- |
-| `ENTRANDO` | não | Ao iniciar, ou quando a sincronização inicial não se confirma |
+| `ENTRANDO` | não | Ao iniciar, enquanto procura o outro nó (até 10 s) |
 | `RESERVA` | não | Um primário sem reserva aceitou este nó e enviou a cópia completa |
-| `PRIMARIO` pausado | não | Os dois estavam entrando e este tem o nome menor (jogo novo), ou perdeu o reserva |
-| `PRIMARIO` com reserva | sim | Um reserva se juntou a ele |
-| `PRIMARIO` sozinho | sim | Era reserva e o primário caiu (promoção, `epoch` + 1) |
+| `PRIMARIO` com reserva | sim | Um reserva se juntou a ele; cada jogada é replicada antes da resposta |
+| `PRIMARIO` sozinho | sim | Criou o jogo sem achar o outro nó, assumiu após a queda do primário, ou perdeu o reserva e esperou 7 s |
+| `PRIMARIO` em espera | não | Acabou de perder o reserva; dura no máximo 7 s |
 
-- **Nenhum nó se declara primário sozinho.** Um jogo novo só nasce quando os dois estão `ENTRANDO` e se veem; o de nome menor cria.
-- **Quem volta vira reserva.** Um nó que reinicia fica `ENTRANDO` e se junta a quem está atendendo. Um primário pausado que encontra o outro atendendo descarta a própria cópia e vira reserva dele.
-- **Primário pausado volta a atender** quando o reserva reinicia vazio e se junta a ele.
-- `epoch` conta as promoções, é replicada e aparece no `PING`. O gateway prefere o nó que atende com a maior época.
+- **Um nó sozinho atende.** Ao iniciar, o nó procura o outro por 10 s. Se o outro já atende, vira reserva dele. Se os dois estão iniciando, o de nome menor cria o jogo. Se ninguém responde, cria o jogo e atende com uma cópia só.
+- **Quando o outro nó entra, passa a guardar a segunda cópia.** A partir daí cada jogada é replicada antes de ser confirmada.
+- **Quem volta vira reserva.** Um nó que reinicia se junta a quem está atendendo.
+- **Perda do reserva:** o primário espera 7 s, mais que os 5 s que o reserva leva para assumir, e então segue sozinho. Se foi só a rede entre os nós que caiu, nesse intervalo o reserva já assumiu e o gateway já mandou os jogadores para ele.
+- **Dois primários se reencontram:** fica o que confirmou mais jogadas (`revision`); no empate, a maior `epoch` e depois o menor nome. O outro descarta a própria cópia e vira reserva. O gateway usa a mesma ordem para escolher a quem encaminhar.
+- `epoch` conta as promoções e `revision` as alterações; as duas são replicadas e aparecem no `PING`.
 
-Consequência para o Docker: `restart: unless-stopped` é seguro, porque um nó que volta nunca assume sozinho.
+Consequência para o Docker: `restart: unless-stopped` é seguro, porque um nó que volta procura o outro antes de qualquer coisa.
 
 ## Entrada e comunicação
 
@@ -86,9 +88,9 @@ A consulta de estado monta só a sala do jogador, não o mundo inteiro.
 
 - **Replicação síncrona:** o primário envia o estado completo ao reserva e só responde depois do ACK com a mesma revisão.
 - **Sincronização inicial:** o reserva só pode se promover depois da segunda mensagem do primário, que prova que o ACK inicial chegou. Se a cópia inicial falhar, o primário não se pausa.
-- **Heartbeat:** a cada 0,5 s. O primário espera 3 s; o reserva espera 5 s. O primário se pausa antes de o reserva assumir, então nunca há dois nós confirmando jogadas.
+- **Heartbeat:** a cada 0,5 s. O primário espera 3 s; o reserva espera 5 s. O primário se pausa antes de o reserva assumir e só volta a atender sozinho 7 s depois.
 - **Queda do primário:** o reserva detecta o fechamento da conexão (processo encerrado) ou o timeout (computador desligado) e assume com a última revisão.
-- **Queda do reserva:** o primário se pausa e responde `retry`. Quando o reserva volta, se junta a ele e o jogo continua.
+- **Queda do reserva:** o primário se pausa por até 7 s e depois segue sozinho. Quando o reserva volta, se junta a ele e recebe a cópia.
 - **Gateway e navegador:** em `retry` ou falha, o gateway tenta o outro nó; sem nenhum, responde 503 e o navegador reenvia o mesmo comando.
 - **Reenvio:** os recibos são replicados; um reenvio após a troca devolve o resultado registrado sem repetir a jogada.
 - **Execuções diferentes:** se os dois nós reiniciarem, o `deployment_id` muda e o navegador volta à tela de nome (`fatal`).
@@ -97,4 +99,11 @@ A consulta de estado monta só a sala do jogador, não o mundo inteiro.
 
 A chave de replicação é comparada com `hmac.compare_digest`. O tráfego entre os nós e o gateway passa pelo Tailscale (cifrado); o público só alcança o gateway pelo HTTPS da Cloudflare. Tokens nunca são registrados em log: o gateway não registra requisições.
 
-O modelo supõe falha por parada, uma de cada vez. Com dois nós não há como distinguir queda de partição; a proteção vem de o primário nunca confirmar sem o reserva. Uma falha dupla (o promovido aceita jogadas e depois reinicia vazio enquanto o antigo está pausado) perde jogadas; evitá-la exige um terceiro nó como árbitro. Se os dois nós pararem, as partidas se perdem.
+O modelo supõe falha por parada, uma de cada vez. Nesse modelo nenhuma jogada confirmada com as duas cópias se perde.
+
+O projeto escolhe disponibilidade: um nó sozinho atende. O preço aparece em dois casos:
+
+- **Jogadas confirmadas com uma cópia só** (nó sozinho) se perdem se esse nó cair antes de o outro voltar.
+- **Falha só da rede entre os dois nós**, com as duas máquinas vivas: cada nó pode acabar atendendo sozinho. A espera de 7 s e a preferência do gateway fazem os jogadores irem todos para o mesmo nó no caso comum; se mesmo assim os dois receberem jogadas, ao se reencontrarem fica o que confirmou mais e as jogadas do outro são descartadas. Evitar isso por completo exige um terceiro nó como árbitro.
+
+Se os dois nós pararem, as partidas se perdem.

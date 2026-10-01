@@ -13,7 +13,7 @@ import uuid
 
 from forca.wire import receive, send
 from gateway import Gateway
-from tests.test_servidor import Processes, free_port, token, wait_for
+from tests.test_servidor import BACKUP, Processes, free_port, ping, token, wait_for
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,8 +37,8 @@ def api(port, body):
 class FakeNode:
     """Nó falso: responde PING com o papel dado e registra os comandos recebidos."""
 
-    def __init__(self, serving, epoch=1):
-        self.serving, self.epoch, self.received = serving, epoch, []
+    def __init__(self, serving, epoch=1, revision=0):
+        self.serving, self.epoch, self.revision, self.received = serving, epoch, revision, []
         self.listener = socket.create_server(("127.0.0.1", 0))
         self.address = f"127.0.0.1:{self.listener.getsockname()[1]}"
         threading.Thread(target=self.loop, daemon=True).start()
@@ -52,7 +52,8 @@ class FakeNode:
             with connection, connection.makefile("rwb") as stream:
                 message = receive(stream)
                 if message["type"] == "PING":
-                    send(stream, {"ok": True, "serving": self.serving, "epoch": self.epoch, "role": "X"})
+                    send(stream, {"ok": True, "serving": self.serving, "epoch": self.epoch,
+                                  "revision": self.revision, "role": "X"})
                     continue
                 self.received.append(message)
                 send(stream, {"ok": True, "node": self.address} if self.serving
@@ -83,13 +84,17 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual((code, response["node"]), (200, active.address))
         self.assertEqual(len(idle.received), 1)
 
-    def test_prefere_a_maior_epoca(self):
+    def test_entre_dois_atendendo_prefere_mais_jogadas_e_depois_a_maior_epoca(self):
         old, new = FakeNode(True, epoch=1), FakeNode(True, epoch=2)
-        self.addCleanup(old.close)
-        self.addCleanup(new.close)
+        busy = FakeNode(True, epoch=1, revision=5)
+        for node in (old, new, busy):
+            self.addCleanup(node.close)
         gateway = Gateway([old.address, new.address])
         gateway.start()
-        wait_for(lambda: gateway.order()[0] == new.address)
+        wait_for(lambda: gateway.order()[0] == new.address)  # Mesmas jogadas: a maior época.
+        gateway = Gateway([new.address, busy.address])
+        gateway.start()
+        wait_for(lambda: gateway.order()[0] == busy.address)  # Mais jogadas vence a época maior.
 
     def test_nenhum_no_disponivel(self):
         gateway = Gateway([f"127.0.0.1:{free_port()}"])
@@ -191,6 +196,8 @@ class EndToEndTests(Processes):
 
     def test_partida_continua_pelo_mesmo_endereco_apos_a_queda(self):
         wait_for(lambda: self.view("Ana").get("ok"))
+        # O primeiro nó já atende sozinho; a queda só é coberta depois que o outro guarda a cópia.
+        wait_for(lambda: ping(self.game("forca-b"))["role"] == BACKUP)
         self.assertEqual(self.send("Ana", "ENTRAR", name="Ana")["node"], "forca-a")
         state = self.send("Bruno", "ENTRAR", name="Bruno")["state"]
         request_id = str(uuid.uuid4())

@@ -31,12 +31,19 @@ if [ ! -f .env ]; then
     esac
     read -rsp "Chave de autenticação do Tailscale (tskey-auth-...): " authkey; echo
     read -rsp "Chave de replicação (igual nos dois nós): " replication; echo
+    if [ -z "$authkey" ] || [ -z "$replication" ]; then
+        echo "As duas chaves são obrigatórias." >&2; exit 1
+    fi
+    case "$replication" in
+        *\'*) echo "A chave de replicação não pode conter aspas simples." >&2; exit 1 ;;
+    esac
     umask 077
+    # Aspas simples: o Compose não interpreta \$ nem # dentro da chave.
     cat > .env <<EOF
 NODE_NAME=$node
 PEER=$peer:5001
 TS_AUTHKEY=$authkey
-REPLICATION_KEY=$replication
+REPLICATION_KEY='$replication'
 EOF
     echo ".env criado para $node."
 fi

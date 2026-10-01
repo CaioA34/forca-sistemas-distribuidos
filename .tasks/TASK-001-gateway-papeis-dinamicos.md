@@ -196,3 +196,23 @@ Corrigir amanhã (detalhes e critérios em `.tasks/TASK-001-qa.md`):
 
 Continuam em aberto: `/api/status` público; limite de 8 conexões não autenticadas na porta 5001;
 testes de join simultâneo e de duplicata atrasada.
+
+### Tailscale verificado no WSL (01/10/2026)
+
+Os três projetos Compose reais (forca-a, forca-b e o gateway de `deploy/oracle`) subiram no mesmo WSL
+com a chave real:
+
+- container `tailscale` sobe em modo kernel (`tailscale0`) e autentica com a chave com tag;
+- `forca-a`/`forca-b` **resolvem dentro do container servidor** (`TS_ACCEPT_DNS` funciona; plano B
+  de IPs não foi necessário);
+- nós sincronizam e o gateway roteia pela rede do Tailscale;
+- ensaio de falhas pelo Tailscale OK: processo morto e reiniciado, "PC" desligado (troca em ~6 s)
+  e religado como reserva, sem perder jogadas;
+- `depends_on: restart: true` funciona com `docker compose restart tailscale`.
+
+Limite encontrado: reinício do container `tailscale` por fora do Compose deixa o servidor preso à
+rede antiga (documentado em `docs/implantacao.md`).
+
+Falta: `scripts/preparar-vm.sh` (precisa de sudo), VMs reais em dois PCs, Oracle/Nginx/Cloudflare
+e o teste de desligamento físico. Os dispositivos de teste devem ser apagados do painel do Tailscale
+antes de subir as VMs reais.

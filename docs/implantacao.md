@@ -111,6 +111,33 @@ Se falhar, use os endereços `100.x.y.z` do Tailscale no lugar dos nomes. Veja o
 máquina com `sudo docker compose exec tailscale tailscale ip -4` e troque `PEER` (nas VMs) e
 `SERVIDORES` (na Oracle). Esses endereços não mudam enquanto o volume `tailscale-state` existir.
 
+## Se o container tailscale reiniciar sozinho
+
+O servidor usa a rede do container `tailscale`. Se só esse container reiniciar por fora do Compose
+(`docker restart`, ou uma queda seguida do reinício automático), o servidor continua rodando preso
+à rede antiga: o nó aparece `FORA_DO_AR` no `/api/status` e o outro nó se pausa. Para recuperar:
+
+```bash
+sudo docker compose restart servidor
+```
+
+`docker compose restart tailscale` já reinicia o servidor junto, e reiniciar a VM inteira também
+não tem esse problema.
+
+## Ensaiar tudo em uma máquina só
+
+Com Docker e o `.env` preenchido, os três projetos sobem na mesma máquina (verificado no WSL):
+
+```bash
+docker compose -p forca-a up -d --build
+NODE_NAME=forca-b PEER=forca-a:5001 docker compose -p forca-b up -d
+(cd deploy/oracle && docker compose --env-file ../../.env -p forca-gateway up -d)
+```
+
+O jogo fica em http://127.0.0.1:8080. Ao terminar, `docker compose -p <projeto> down -v` em cada um
+e **apague os três dispositivos em Machines no painel do Tailscale**, senão as VMs reais entrarão
+como `forca-a-1`, `forca-b-1` e `forca-gateway-1`.
+
 ## Reinstalar uma VM
 
 O Tailscale não aceita dois dispositivos com o mesmo nome: uma VM nova chamada `forca-a`, com o

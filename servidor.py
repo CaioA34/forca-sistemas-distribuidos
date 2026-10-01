@@ -189,6 +189,7 @@ class Server:
             if not self.accepts(hello):
                 send(stream, self.status())
                 return
+            paused = not self.serving
             self.backup = stream
             try:
                 self.replicate(self.state)
@@ -198,6 +199,9 @@ class Server:
                 self.backup = None
                 LOG.warning("Sincronização inicial com o reserva falhou; aguardando nova tentativa.")
                 return
+            if paused:
+                # Pausado, o nó não registrou presença: quem consultou o tempo todo não pode parecer sumido.
+                self.since, self.seen = time.monotonic(), {}
             LOG.info("Reserva %s sincronizado na revisão %s. Jogadas liberadas.",
                      hello.get("node", "?"), self.state["revision"])
         try:

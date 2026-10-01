@@ -17,10 +17,20 @@ Feito:
 - Documentação atualizada: README, ARCHITECTURE, ROADMAP, `docs/protocolo-etapa-1.md`,
   `docs/especificacao-jogo-forca.md` (v3.0) e novo `docs/implantacao.md`.
 
-Não verificado (não havia Docker nesta máquina):
+Verificado em 01/10/2026 no WSL (Ubuntu 26.04, Docker 29.1.3, Compose 2.40.3):
 
-- `compose.yaml`, `deploy/oracle/compose.yaml`, `Dockerfile` e `scripts/preparar-vm.sh` nunca
-  foram executados. Primeiro teste real deve confirmar:
+- 70 testes OK no Linux (um teste lia `/api/status` antes de o gateway atualizar; agora espera).
+- Imagem constrói e roda como usuário sem privilégios; nós se acham por nome na rede do Docker.
+- `deploy/local/ensaio.py` com `deploy/local/compose.yaml` (dois nós + gateway em containers):
+  processo do primário morre e o Docker o reinicia → volta como RESERVA; rede do primário cortada
+  (como desligar o PC) → o outro assume em ~6 s e o antigo se pausa antes (3 s); rede volta → o
+  antigo cede e vira reserva; reserva cai e volta → primário pausa e retoma. Nenhuma jogada perdida.
+- `docker compose config` valida `compose.yaml` e `deploy/oracle/compose.yaml`.
+
+Ainda não verificado (falta a chave do Tailscale e `sudo`):
+
+- O container `tailscale` e `scripts/preparar-vm.sh` nunca foram executados. Primeiro teste real
+  deve confirmar:
   1. container `tailscale` sobe em modo kernel (`TS_USERSPACE=false`, `/dev/net/tun`, `NET_ADMIN`);
   2. `forca-a`/`forca-b` resolvem **dentro do container servidor** (`TS_ACCEPT_DNS`); se não,
      usar IPs `100.x` em `PEER`/`SERVIDORES` (plano B descrito em `docs/implantacao.md`);
@@ -172,3 +182,17 @@ Corrigir amanhã (detalhes e critérios em `.tasks/TASK-001-qa.md`):
    para o polling se `render` lançar exceção (envolver em try/finally); 8 conexões não autenticadas
    na porta 5001 atrasam o join (só alcançável dentro do Tailscale).
 5. Testes faltando: join simultâneo, pausa longa + retomada, duplicata atrasada após o comando seguinte.
+
+### Correções do QA aplicadas (01/10/2026)
+
+- **Item 1 (servidor):** ao voltar a atender depois de pausado, o nó reinicia `since` e `seen`
+  (`Server.attend`). Teste: `test_pausa_longa_nao_faz_quem_ficou_parecer_sumido` (falha sem a correção).
+  Efeito colateral esperado: a partida aparece pausada até os dois jogadores consultarem de novo (≤ 1 s).
+- **Item 2 (gateway):** `Handler.timeout` de 10 s (`--idle-timeout`). Teste:
+  `test_conexoes_ociosas_nao_derrubam_o_gateway` (128 conexões ociosas + corpo incompleto).
+- **Item 3:** leitura do gateway e do `cliente.py` subiu de 8 s para 10 s (pior caso do nó é 8 s).
+- **Item 4 (parcial):** `run()` do `app.js` reagenda a consulta mesmo se a tela lançar erro.
+- 72 testes OK no Windows e no WSL; `deploy/local/ensaio.py` OK duas vezes após as correções.
+
+Continuam em aberto: `/api/status` público; limite de 8 conexões não autenticadas na porta 5001;
+testes de join simultâneo e de duplicata atrasada.

@@ -138,7 +138,7 @@ Um jogador sozinho que envia SAIR cancela a sala. Em uma partida iniciada, SAIR 
 
 ## 6 Controle de concorrência
 
-**RF07 Exclusão mútua.** O nó usa um threading.Lock para tornar indivisível a sequência validar, aplicar, replicar e adotar o novo estado. Cada conexão é atendida por uma thread; um BoundedSemaphore limita a 64 as conexões simultâneas, e as excedentes são fechadas. Uma requisição espera no máximo 2 segundos pela trava e, depois disso, recebe retry; como o gateway lê por 8 segundos e o navegador espera 20, nenhuma requisição é aplicada depois que quem a enviou desistiu dela.
+**RF07 Exclusão mútua.** O nó usa um threading.Lock para tornar indivisível a sequência validar, aplicar, replicar e adotar o novo estado. Cada conexão é atendida por uma thread; um BoundedSemaphore limita a 64 as conexões simultâneas, e as excedentes são fechadas. Uma requisição espera no máximo 2 segundos pela trava e, depois disso, recebe retry; como o gateway lê por 10 segundos e o navegador espera 20, nenhuma requisição é aplicada depois que quem a enviou desistiu dela.
 
 A trava é global, não por sala, e é mantida durante a replicação. Isso simplifica o raciocínio e é suficiente para a escala da demonstração, pois cada comando é curto e nenhum espera o jogador pensar. A versão da sala (room_version) enviada pelo cliente rejeita jogadas baseadas em um estado antigo.
 

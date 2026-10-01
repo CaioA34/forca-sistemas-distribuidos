@@ -10,7 +10,7 @@ import unittest
 import uuid
 
 import forca.wire
-from forca.lobby import new_state
+from forca.lobby import NAME_HOLD, apply, new_state, player_id
 from forca.wire import receive, send
 from servidor import BACKUP, JOINING, PRIMARY, Server
 
@@ -25,7 +25,7 @@ def free_port():
 
 def exchange(port, command):
     with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
-        connection.settimeout(8)
+        connection.settimeout(10)
         with connection.makefile("rwb") as stream:
             send(stream, command)
             return receive(stream)
@@ -270,6 +270,22 @@ class InProcessTests(unittest.TestCase):
         self.assertEqual(a.state["revision"], 7)
         wait_for(lambda: b.backup is not None)
         self.assertTrue(b.serving)
+
+    def test_pausa_longa_nao_faz_quem_ficou_parecer_sumido(self):
+        # Ana espera na sala-1. O primário fica pausado por mais de NAME_HOLD s (sem reserva) e,
+        # pausado, não registra presença. Ao voltar a atender, Ana não pode perder a sala.
+        state = new_state()
+        apply(state, command("Ana", "ENTRAR", name="Ana"), {player_id(token("Ana"))}, ["SOCKET"])
+        b = self.node("forca-b", 0, JOINING)
+        a = self.node("forca-a", b.sync_port, PRIMARY, state=state)
+        a.since = time.monotonic() - 10 * NAME_HOLD
+        b.peer = f"127.0.0.1:{a.sync_port}"
+        for server in (a, b):
+            threading.Thread(target=server.run, daemon=True).start()
+        wait_for(lambda: a.serving)
+        self.assertTrue(a.request(command("Bruno", "ENTRAR", name="Bruno"))["ok"])
+        view = a.request({"type": "ESTADO", "token": token("Ana")})["state"]
+        self.assertEqual((view["room_id"], view["status"]), ("sala-1", "AGUARDANDO"))
 
     def test_estado_grande_demais_recusa_o_comando_sem_pausar(self):
         server = self.node("forca-a", 0, PRIMARY, alone=True, state=new_state())

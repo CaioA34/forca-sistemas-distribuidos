@@ -43,6 +43,14 @@ python servidor.py --node forca-b --port 5002 --sync-port 5003 --peer 127.0.0.1:
 python gateway.py --servers 127.0.0.1:5000,127.0.0.1:5002
 ```
 
+Para ensaiar em containers, sem Tailscale (precisa de Docker):
+
+```bash
+cd deploy/local && docker compose up -d --build && python3 ensaio.py
+```
+
+O `ensaio.py` joga pelo gateway e derruba os nós: processo que morre e é reiniciado pelo Docker, rede cortada (como desligar o PC) e retorno como reserva.
+
 O cliente de terminal continua disponível para testes: `python cliente.py --name Ana --nova-sessao` (ele usa `127.0.0.1:5000,127.0.0.1:5002` por padrão).
 
 ## Na página do jogo

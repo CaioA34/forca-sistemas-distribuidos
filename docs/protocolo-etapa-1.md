@@ -34,8 +34,9 @@ JSON que o nó recebe na porta 5000. `cliente.py` fala direto com a porta 5000.
   (sem tamanho) ou 413 (grande demais).
 - Roteamento: o gateway envia `PING` a cada nó a cada 1 s e tenta primeiro o nó
   que atende com a maior `epoch`. Em `retry` ou falha, tenta o próximo. Tempos:
-  1 s para conectar, 8 s para ler, e nenhuma tentativa começa depois de 6 s
-  (pior caso de cerca de 15 s).
+  1 s para conectar, 10 s para ler, e nenhuma tentativa começa depois de 6 s
+  (pior caso de cerca de 17 s). Uma conexão HTTP que não envia a requisição em
+  10 s é encerrada.
 - O navegador espera até 20 s, mais que o pior caso do gateway, antes de
   reenviar o comando pendente. Com a espera limitada do nó pela trava (abaixo),
   uma requisição só é aplicada enquanto quem a enviou ainda espera a resposta.
@@ -55,7 +56,7 @@ consulta.
 Os dois nós escutam a porta 5000 o tempo todo; só o nó que está atendendo
 aceita comandos, os outros respondem `retry`.
 
-Tempos do `cliente.py`: 2 s para conectar e 8 s para ler. O servidor usa 4 s
+Tempos do `cliente.py`: 2 s para conectar e 10 s para ler. O servidor usa 4 s
 por conexão, espera no máximo 2 s pela trava (senão responde `retry`) e atende
 até 64 conexões simultâneas; as excedentes são fechadas.
 

@@ -23,7 +23,7 @@ from forca.wire import receive, send
 def exchange(address, command):
     host, port = address.rsplit(":", 1)
     with socket.create_connection((host, int(port)), timeout=2) as connection:
-        connection.settimeout(8)  # Maior que a espera do servidor pela trava mais a replicação.
+        connection.settimeout(10)  # Maior que o pior caso do servidor: trava, envio e ACK da réplica.
         with connection.makefile("rwb") as stream:
             send(stream, command)
             return receive(stream)

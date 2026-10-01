@@ -143,6 +143,30 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status["nodes"][0]["address"], self.node.address)
 
 
+class IdleConnectionTests(unittest.TestCase):
+    def test_conexoes_ociosas_nao_derrubam_o_gateway(self):
+        node = FakeNode(True)
+        self.addCleanup(node.close)
+        port = free_port()
+        environment = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
+        process = subprocess.Popen(
+            [sys.executable, "gateway.py", "--host", "127.0.0.1", "--port", str(port),
+             "--servers", node.address, "--idle-timeout", "1"], cwd=ROOT, env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.addCleanup(process.communicate, timeout=10)
+        self.addCleanup(process.kill)
+        wait_for(lambda: http(port, "GET", "/api/status"))
+        idle = [socket.create_connection(("127.0.0.1", port), timeout=2) for _ in range(128)]
+        for connection in idle:
+            self.addCleanup(connection.close)
+        half = socket.create_connection(("127.0.0.1", port), timeout=2)
+        self.addCleanup(half.close)
+        half.sendall(b"POST /api HTTP/1.1\r\nContent-Length: 50\r\n\r\n{")  # Corpo que nunca termina.
+        # Todos os slots estão presos; passado o tempo limite, o gateway volta a responder.
+        self.assertEqual(wait_for(lambda: http(port, "GET", "/api/status")[0], seconds=10), 200)
+        self.assertEqual(api(port, {"type": "ESTADO", "token": "t"})[0], 200)
+
+
 class EndToEndTests(Processes):
     """Navegador simulado → gateway → dois nós reais; o primário cai no meio da partida."""
 
@@ -184,9 +208,11 @@ class EndToEndTests(Processes):
         self.assertEqual(again["message"], first["message"])  # Reenvio pelo gateway: sem efeito duplo.
         guess = self.send("Bruno", "CHUTAR", word="XYZ", version=before["room_version"])
         self.assertTrue(guess["ok"])
-        status = json.loads(http(self.http_port, "GET", "/api/status")[2])
-        serving = [n for n in status["nodes"] if n["serving"]]
-        self.assertEqual([(n["node"], n["epoch"]) for n in serving], [("forca-b", 2)])
+
+        def serving():  # O status vem do PING a cada 1 s: pode atrasar em relação à troca.
+            nodes = json.loads(http(self.http_port, "GET", "/api/status")[2])["nodes"]
+            return [(n["node"], n["epoch"]) for n in nodes if n["serving"]]
+        wait_for(lambda: serving() == [("forca-b", 2)])
 
 
 if __name__ == "__main__":

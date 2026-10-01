@@ -1,0 +1,30 @@
+# Ensaio em uma máquina só, sem Tailscale: os dois nós e o gateway na rede do Docker.
+# Usa a mesma imagem e a mesma política de reinício da implantação real.
+# Nesta pasta: docker compose up -d --build   →   http://127.0.0.1:8080
+services:
+  forca-a:
+    build: ../..
+    hostname: forca-a
+    environment:
+      NODE_NAME: forca-a
+      PEER: forca-b:5001
+      REPLICATION_KEY: ${REPLICATION_KEY:-forca-aula}
+    restart: unless-stopped
+
+  forca-b:
+    build: ../..
+    hostname: forca-b
+    environment:
+      NODE_NAME: forca-b
+      PEER: forca-a:5001
+      REPLICATION_KEY: ${REPLICATION_KEY:-forca-aula}
+    restart: unless-stopped
+
+  gateway:
+    build: ../..
+    command: ["python", "gateway.py"]
+    environment:
+      SERVIDORES: forca-a:5000,forca-b:5000
+    ports:
+      - "127.0.0.1:${GATEWAY_HOST_PORT:-8080}:8080"
+    restart: unless-stopped

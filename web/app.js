@@ -5,7 +5,7 @@
 const KEY = "forca.sessao";      // sessionStorage: cada aba é um jogador e sobrevive a recarregar.
 const POLL = 1000;               // Consulta de estado.
 const RESEND = 150;              // Comando pendente sai logo.
-const TIMEOUT = 20000;           // Maior que a última tentativa possível do gateway (~15 s).
+const TIMEOUT = 20000;           // Maior que a última tentativa possível do gateway (~17 s).
 const MAX_ERRORS = 6;
 const STATUS = { AGUARDANDO: "Aguardando adversário", EM_JOGO: "Em jogo", PAUSADA: "Pausada",
                  ENCERRADA: "Encerrada", CANCELADA: "Cancelada" };
@@ -79,8 +79,11 @@ function schedule(ms) {
 }
 
 async function run() {
-  await tick();
-  if (session) schedule(session.pending ? RESEND : POLL);
+  try {
+    await tick();
+  } finally {  // Um erro ao desenhar a tela não pode parar as consultas.
+    if (session) schedule(session.pending ? RESEND : POLL);
+  }
 }
 
 async function tick() {

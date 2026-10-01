@@ -22,8 +22,9 @@ FILES = {"/": ("index.html", "text/html; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8")}
 COMMANDS = {"ESTADO", "ENTRAR", "JOGAR", "CHUTAR", "SAIR"}
 MAX_BODY = 8192
-CONNECT, READ = 1, 8   # A leitura cobre a espera do nó pela trava (2 s) mais a replicação (3 s).
-START_LIMIT = 6        # Nenhuma tentativa começa depois disso: o navegador espera 20 s antes de reenviar.
+CONNECT, READ = 1, 10  # A leitura cobre o pior caso do nó: trava (2 s) + envio (3 s) + ACK (3 s).
+IDLE = 10              # Conexão HTTP que não envia a requisição nesse tempo é encerrada.
+START_LIMIT = 6        # Nenhuma tentativa começa depois disso: o pior caso fica em ~17 s e o navegador espera 20 s.
 PROBE = 1
 
 
@@ -93,6 +94,7 @@ class Gateway:
 class Handler(BaseHTTPRequestHandler):
     gateway: Gateway
     slots = threading.BoundedSemaphore(128)
+    timeout = IDLE  # Sem isto, conexões ociosas ocupariam todos os slots para sempre.
     server_version = "forca-gateway"
     sys_version = ""
 
@@ -155,7 +157,10 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("GATEWAY_PORT", "8080")))
     parser.add_argument("--servers", default=os.getenv("SERVIDORES", "127.0.0.1:5000,127.0.0.1:5002"),
                         help="Endereços de jogo dos nós, separados por vírgula (ex.: forca-a:5000,forca-b:5000).")
+    parser.add_argument("--idle-timeout", type=float, default=IDLE,
+                        help="Segundos até encerrar uma conexão HTTP que não envia a requisição.")
     args = parser.parse_args()
+    Handler.timeout = args.idle_timeout
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     gateway = Gateway([s.strip() for s in args.servers.split(",") if s.strip()])
     gateway.start()
